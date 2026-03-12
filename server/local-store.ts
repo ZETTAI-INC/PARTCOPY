@@ -246,11 +246,19 @@ async function ensureLocalRoot() {
 
 async function acquireLock() {
   await ensureLocalRoot()
+  const MAX_WAIT = 10000 // 10s max
+  const start = Date.now()
   while (true) {
     try {
       await mkdir(LOCK_PATH)
       return
     } catch {
+      if (Date.now() - start > MAX_WAIT) {
+        // Stale lock — force remove and retry
+        await rm(LOCK_PATH, { recursive: true, force: true })
+        await mkdir(LOCK_PATH)
+        return
+      }
       await delay(25)
     }
   }

@@ -41,8 +41,8 @@ const DATA_RETENTION_DAYS = Number(process.env.DATA_RETENTION_DAYS) || 30
 const CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000 // 24 hours
 
 let shuttingDown = false
-process.on('SIGTERM', () => { shuttingDown = true; logger.info('Shutdown signal received', { signal: 'SIGTERM', workerId: WORKER_ID }) })
-process.on('SIGINT', () => { shuttingDown = true; logger.info('Shutdown signal received', { signal: 'SIGINT', workerId: WORKER_ID }) })
+process.on('SIGTERM', () => { shuttingDown = true; logger.info('Shutdown signal received', { signal: 'SIGTERM', workerId: WORKER_ID }); setTimeout(() => process.exit(0), 3000).unref() })
+process.on('SIGINT', () => { shuttingDown = true; logger.info('Shutdown signal received', { signal: 'SIGINT', workerId: WORKER_ID }); setTimeout(() => process.exit(0), 3000).unref() })
 
 async function uploadBuffer(bucket: string, path: string, data: Buffer | string, contentType: string): Promise<string> {
   const buffer = typeof data === 'string' ? Buffer.from(data, 'utf-8') : data

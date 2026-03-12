@@ -35,7 +35,15 @@ import { logger } from './logger.js'
 
 const app = express()
 app.use(cors({
-  origin: process.env.CORS_ORIGIN || 'http://localhost:5180',
+  origin: (origin, callback) => {
+    const allowed = (process.env.CORS_ORIGIN || 'http://localhost:5180').split(',')
+    // Allow requests with no origin (curl, server-to-server)
+    if (!origin || allowed.includes(origin)) {
+      callback(null, true)
+    } else {
+      callback(null, false)
+    }
+  },
   credentials: true
 }))
 app.use(express.json({ limit: '1mb' }))
@@ -1208,9 +1216,10 @@ const shutdownHandler = () => {
   shuttingDown = true
   logger.info('Server shutting down')
   server.close(() => {
-    logger.info('Server closed')
     process.exit(0)
   })
+  // Force exit after 2s if close hangs
+  setTimeout(() => process.exit(0), 2000).unref()
 }
 process.on('SIGTERM', shutdownHandler)
 process.on('SIGINT', shutdownHandler)
