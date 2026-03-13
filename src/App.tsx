@@ -92,7 +92,16 @@ export default function App() {
       try {
         const res = await fetch(`/api/jobs/${jobId}`)
         const { job } = await res.json() as { job: CrawlJob }
-        setJobStatus(`${job.status}${job.section_count ? ` (${job.section_count} sections)` : ''}`)
+        const STATUS_LABELS: Record<string, string> = {
+          queued: 'キュー待機中...',
+          claimed: 'ページを読み込み中...',
+          rendering: 'ページをレンダリング中...',
+          parsed: 'セクションを検出中...',
+          normalizing: 'AIで分類・品質判定中...',
+        }
+        const label = STATUS_LABELS[job.status] || job.status
+        const sectionInfo = job.section_count ? `${job.section_count} パーツ検出` : ''
+        setJobStatus(`${label}${sectionInfo ? ` / ${sectionInfo}` : ''}`)
 
         if (job.status === 'done') {
           stopPolling()
@@ -154,7 +163,7 @@ export default function App() {
     })
   }, [])
 
-  const addSavedToCanvas = useCallback((section: SourceSection) => {
+  const addSavedToCanvas = useCallback((section: SourceSection, atIndex?: number) => {
     if (EXCLUDED_FAMILIES.has(section.block_family)) return
     setSections(prev => {
       if (prev.find(s => s.id === section.id)) return prev
@@ -162,7 +171,13 @@ export default function App() {
     })
     setCanvas(prev => {
       if (prev.some(c => c.sectionId === section.id)) return prev
-      return [...prev, { id: crypto.randomUUID(), sectionId: section.id, position: prev.length }]
+      const newBlock = { id: crypto.randomUUID(), sectionId: section.id, position: 0 }
+      if (atIndex !== undefined && atIndex >= 0 && atIndex <= prev.length) {
+        const next = [...prev]
+        next.splice(atIndex, 0, newBlock)
+        return next.map((c, i) => ({ ...c, position: i }))
+      }
+      return [...prev, { ...newBlock, position: prev.length }]
     })
     setView('editor')
   }, [])
@@ -206,7 +221,7 @@ export default function App() {
           <span className="header-separator" />
           <nav className="header-nav">
             <button className={`header-nav-link ${view === 'editor' ? 'active' : ''}`} onClick={() => setView('editor')}>
-              エディタ
+              ビルダー
             </button>
             <button className={`header-nav-link ${view === 'library' ? 'active' : ''}`} onClick={() => setView('library')}>
               ライブラリ
@@ -237,7 +252,7 @@ export default function App() {
           <div className="editor-sidebar">
             <Library onAddToCanvas={addSavedToCanvas} />
           </div>
-          <Canvas items={canvasItems} onRemove={removeFromCanvas} onMove={moveBlock} />
+          <Canvas items={canvasItems} onRemove={removeFromCanvas} onMove={moveBlock} onAddToCanvas={addSavedToCanvas} />
         </div>
       )}
 

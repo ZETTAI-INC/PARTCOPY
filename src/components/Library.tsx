@@ -250,6 +250,11 @@ export function Library({ onAddToCanvas }: Props) {
             <div
               key={section.id}
               className="library-card"
+              draggable
+              onDragStart={e => {
+                e.dataTransfer.setData('application/partcopy-section', JSON.stringify(section))
+                e.dataTransfer.effectAllowed = 'copy'
+              }}
               onMouseEnter={() => setHoveredId(section.id)}
               onMouseLeave={() => setHoveredId(null)}
             >
