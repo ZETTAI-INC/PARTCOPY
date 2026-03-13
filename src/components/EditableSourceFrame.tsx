@@ -2,9 +2,11 @@
  * EditableSourceFrame — Source Edit Mode 用。
  * iframe 内部は常に1440px幅でレンダリングし、コンテナに合わせて縮小表示。
  * iframe 内のノードをクリック可能にし、選択ノードを親に通知する。
+ * インライン編集対応：テキストはその場で直接編集、画像はクリックで差し替え。
  *
  * 通信は postMessage 経由:
  *   iframe → parent: { type: 'pc:node-click', stableKey, tagName, textContent, rect }
+ *   iframe → parent: { type: 'pc:inline-edit', stableKey, op, payload }
  *   parent → iframe: { type: 'pc:apply-patch', patch: { nodeStableKey, op, payload } }
  */
 import React, { useRef, useEffect, useState, useCallback } from 'react'
@@ -22,9 +24,10 @@ interface Props {
   sectionId: string
   maxHeight?: number
   onNodeSelect?: (node: SelectedNode | null) => void
+  onInlineEdit?: (stableKey: string, op: string, payload: Record<string, any>) => void
 }
 
-export function EditableSourceFrame({ sectionId, maxHeight, onNodeSelect }: Props) {
+export function EditableSourceFrame({ sectionId, maxHeight, onNodeSelect, onInlineEdit }: Props) {
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const [height, setHeight] = useState(400)
@@ -68,6 +71,17 @@ export function EditableSourceFrame({ sectionId, maxHeight, onNodeSelect }: Prop
       })
   }, [sectionId])
 
+  const recalcHeight = useCallback(() => {
+    const iframe = iframeRef.current
+    if (!iframe) return
+    try {
+      const doc = iframe.contentDocument || iframe.contentWindow?.document
+      if (doc?.body) {
+        setHeight(Math.min(doc.body.scrollHeight, maxHeight || 10000))
+      }
+    } catch {}
+  }, [maxHeight])
+
   // iframe からのメッセージ受信
   useEffect(() => {
     const handler = (e: MessageEvent) => {
@@ -92,6 +106,12 @@ export function EditableSourceFrame({ sectionId, maxHeight, onNodeSelect }: Prop
         }
       }
 
+      // Inline edit from iframe (text edit, image replace)
+      if (e.data.type === 'pc:inline-edit') {
+        onInlineEdit?.(e.data.stableKey, e.data.op, e.data.payload)
+        setTimeout(recalcHeight, 100)
+      }
+
       if (e.data.type === 'pc:patch-applied') {
         setTimeout(recalcHeight, 100)
       }
@@ -99,18 +119,7 @@ export function EditableSourceFrame({ sectionId, maxHeight, onNodeSelect }: Prop
 
     window.addEventListener('message', handler)
     return () => window.removeEventListener('message', handler)
-  }, [onNodeSelect])
-
-  const recalcHeight = useCallback(() => {
-    const iframe = iframeRef.current
-    if (!iframe) return
-    try {
-      const doc = iframe.contentDocument || iframe.contentWindow?.document
-      if (doc?.body) {
-        setHeight(Math.min(doc.body.scrollHeight, maxHeight || 10000))
-      }
-    } catch {}
-  }, [maxHeight])
+  }, [onNodeSelect, onInlineEdit, recalcHeight])
 
   const handleLoad = useCallback(() => {
     setLoading(false)
@@ -143,7 +152,7 @@ export function EditableSourceFrame({ sectionId, maxHeight, onNodeSelect }: Prop
       {loading && (
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center',
           height: 200, color: '#8b90a0', fontSize: 14, background: '#f8f9fb' }}>
-          Loading editor...
+          読み込み中...
         </div>
       )}
       {iframeSrc && (

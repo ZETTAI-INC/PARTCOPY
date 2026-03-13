@@ -108,6 +108,30 @@ export function Canvas({ items, onRemove, onMove, onAddToCanvas }: Props) {
     }
   }, [editingIndex])
 
+  // Inline edit from iframe (auto-apply, no button needed)
+  const handleInlineEdit = useCallback((stableKey: string, op: string, payload: Record<string, any>) => {
+    if (editingIndex === null) return
+    const item = items[editingIndex]
+    if (!item) return
+    // Save patch to server automatically
+    fetch(`/api/sections/${item.section.id}/patch-sets`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label: 'Inline edit' })
+    })
+      .then(r => r.json())
+      .then(data => {
+        const patchSetId = data.patchSet?.id
+        if (!patchSetId) return
+        return fetch(`/api/patch-sets/${patchSetId}/patches`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ patches: [{ nodeStableKey: stableKey, op, payload }] })
+        })
+      })
+      .catch(() => {})
+  }, [editingIndex, items])
+
   const handleCodeSaved = useCallback(() => {
     if (codeEditingIndex !== null) {
       setRefreshKeys(prev => ({ ...prev, [codeEditingIndex]: (prev[codeEditingIndex] || 0) + 1 }))
@@ -271,6 +295,7 @@ export function Canvas({ items, onRemove, onMove, onAddToCanvas }: Props) {
                       <EditableSourceFrame
                         sectionId={item.section.id}
                         onNodeSelect={handleNodeSelect}
+                        onInlineEdit={handleInlineEdit}
                       />
                     ) : (
                       <SourcePreviewFrame

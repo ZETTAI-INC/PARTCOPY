@@ -1124,59 +1124,218 @@ app.get('/api/sections/:sectionId/editable-render', async (req, res) => {
     const cssBundlePath = record.page.css_bundle_path
     const cssLink = cssBundlePath ? `<link rel="stylesheet" href="/assets/${cssBundlePath}">` : ''
 
-  // 編集UIとの通信用スクリプト
+  // 編集UIとの通信用スクリプト（インライン編集対応）
   const editorScript = `
 <script>
-  // ノードクリック時に親ウィンドウにメッセージ送信
+(function() {
+  var TEXT_TAGS = ['h1','h2','h3','h4','h5','h6','p','span','a','button','li','td','th','label','figcaption','dt','dd','blockquote','em','strong','b','i','small','caption'];
+  var currentEditing = null;
+  var tooltip = null;
+  var imgOverlay = null;
+
+  function findPcNode(el) {
+    while (el && !el.dataset.pcKey) el = el.parentElement;
+    return el;
+  }
+
+  function clearSelection() {
+    document.querySelectorAll('[data-pc-selected]').forEach(function(el) {
+      el.removeAttribute('data-pc-selected');
+    });
+  }
+
+  function isTextNode(el) {
+    var tag = el.tagName.toLowerCase();
+    if (TEXT_TAGS.indexOf(tag) === -1) return false;
+    if (el.querySelector('img')) return false;
+    return true;
+  }
+
+  // ---------- Tooltip ----------
+  function showTooltip(el, label) {
+    if (!tooltip) {
+      tooltip = document.createElement('div');
+      tooltip.className = 'pc-tooltip';
+      document.body.appendChild(tooltip);
+    }
+    tooltip.textContent = label;
+    var r = el.getBoundingClientRect();
+    tooltip.style.top = (r.top + window.scrollY - 28) + 'px';
+    tooltip.style.left = (r.left + window.scrollX) + 'px';
+    tooltip.style.display = 'block';
+  }
+  function hideTooltip() {
+    if (tooltip) tooltip.style.display = 'none';
+  }
+
+  // ---------- Image overlay ----------
+  function showImageOverlay(el) {
+    hideImageOverlay();
+    imgOverlay = document.createElement('div');
+    imgOverlay.className = 'pc-img-overlay';
+    imgOverlay.innerHTML = '<div class="pc-img-overlay-content"><span>画像を変更</span></div>';
+    var r = el.getBoundingClientRect();
+    imgOverlay.style.top = (r.top + window.scrollY) + 'px';
+    imgOverlay.style.left = (r.left + window.scrollX) + 'px';
+    imgOverlay.style.width = r.width + 'px';
+    imgOverlay.style.height = r.height + 'px';
+    document.body.appendChild(imgOverlay);
+    imgOverlay.addEventListener('click', function(ev) {
+      ev.stopPropagation();
+      var newSrc = prompt('新しい画像URLを入力', el.src || '');
+      if (newSrc && newSrc !== el.src) {
+        el.src = newSrc;
+        window.parent.postMessage({
+          type: 'pc:inline-edit',
+          stableKey: el.dataset.pcKey || findPcNode(el)?.dataset.pcKey,
+          op: 'replace_asset',
+          payload: { src: newSrc }
+        }, '*');
+      }
+      hideImageOverlay();
+    });
+  }
+  function hideImageOverlay() {
+    if (imgOverlay) { imgOverlay.remove(); imgOverlay = null; }
+  }
+
+  // ---------- Click → inline edit ----------
   document.addEventListener('click', function(e) {
+    if (currentEditing && e.target !== currentEditing && !currentEditing.contains(e.target)) {
+      finishEditing(currentEditing);
+    }
+    if (imgOverlay && !imgOverlay.contains(e.target)) {
+      hideImageOverlay();
+    }
+
+    var target = findPcNode(e.target);
+    if (!target) return;
+
     e.preventDefault();
     e.stopPropagation();
-    var target = e.target;
-    while (target && !target.dataset.pcKey) {
-      target = target.parentElement;
+
+    clearSelection();
+    target.setAttribute('data-pc-selected', '');
+
+    // Notify parent of selection
+    window.parent.postMessage({
+      type: 'pc:node-click',
+      stableKey: target.dataset.pcKey,
+      tagName: target.tagName.toLowerCase(),
+      textContent: (target.textContent || '').slice(0, 500),
+      rect: target.getBoundingClientRect().toJSON()
+    }, '*');
+
+    var tag = target.tagName.toLowerCase();
+
+    // Text → inline contentEditable
+    if (isTextNode(target)) {
+      startEditing(target);
     }
-    if (target && target.dataset.pcKey) {
+    // Image → overlay
+    else if (tag === 'img') {
+      showImageOverlay(target);
+    }
+  });
+
+  function startEditing(el) {
+    if (currentEditing === el) return;
+    if (currentEditing) finishEditing(currentEditing);
+    currentEditing = el;
+    el.contentEditable = 'true';
+    el.setAttribute('data-pc-editing', '');
+    el.focus();
+
+    // Select all text for easy replacement
+    var range = document.createRange();
+    range.selectNodeContents(el);
+    var sel = window.getSelection();
+    sel.removeAllRanges();
+    sel.addRange(range);
+
+    showTooltip(el, 'Enter: 確定 / Esc: キャンセル');
+  }
+
+  function finishEditing(el, cancel) {
+    if (!el || el !== currentEditing) return;
+    var key = el.dataset.pcKey;
+    el.contentEditable = 'false';
+    el.removeAttribute('data-pc-editing');
+    hideTooltip();
+
+    if (!cancel && key) {
       window.parent.postMessage({
-        type: 'pc:node-click',
-        stableKey: target.dataset.pcKey,
-        tagName: target.tagName.toLowerCase(),
-        textContent: (target.textContent || '').slice(0, 500),
-        rect: target.getBoundingClientRect().toJSON()
+        type: 'pc:inline-edit',
+        stableKey: key,
+        op: 'set_text',
+        payload: { text: el.textContent || '' }
       }, '*');
     }
-  });
-  // ホバーハイライト
-  document.addEventListener('mouseover', function(e) {
-    var target = e.target;
-    while (target && !target.dataset.pcKey) {
-      target = target.parentElement;
+    currentEditing = null;
+  }
+
+  // Enter to confirm, Escape to cancel
+  document.addEventListener('keydown', function(e) {
+    if (!currentEditing) return;
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      finishEditing(currentEditing);
     }
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      // Reload original text from server — for now just finish without saving
+      finishEditing(currentEditing, true);
+    }
+  });
+
+  // ---------- Hover highlight with label ----------
+  document.addEventListener('mouseover', function(e) {
+    if (currentEditing) return;
+    var target = findPcNode(e.target);
     document.querySelectorAll('[data-pc-highlight]').forEach(function(el) {
       el.removeAttribute('data-pc-highlight');
-      el.style.outline = '';
     });
     if (target && target.dataset.pcKey) {
-      target.setAttribute('data-pc-highlight', 'true');
-      target.style.outline = '2px solid #3b82f6';
+      target.setAttribute('data-pc-highlight', '');
+      var tag = target.tagName.toLowerCase();
+      var label = tag === 'img' ? 'クリックで画像変更' : isTextNode(target) ? 'クリックでテキスト編集' : tag;
+      showTooltip(target, label);
+    } else {
+      hideTooltip();
     }
   });
-  // 親からのパッチメッセージ受信
+
+  document.addEventListener('mouseout', function(e) {
+    var target = findPcNode(e.target);
+    if (target) target.removeAttribute('data-pc-highlight');
+    if (!currentEditing) hideTooltip();
+  });
+
+  // ---------- Patch from parent (NodeInspector) ----------
   window.addEventListener('message', function(e) {
-    if (!e.data || e.data.type !== 'pc:apply-patch') return;
-    var patch = e.data.patch;
-    var el = document.querySelector('[data-pc-key="' + patch.nodeStableKey + '"]');
-    if (!el) return;
-    switch (patch.op) {
-      case 'set_text': el.textContent = patch.payload.text; break;
-      case 'set_attr': el.setAttribute(patch.payload.attr, patch.payload.value); break;
-      case 'replace_asset':
-        if (el.tagName === 'IMG') { el.src = patch.payload.src; if (patch.payload.alt) el.alt = patch.payload.alt; }
-        break;
-      case 'set_style_token': el.style.setProperty(patch.payload.property, patch.payload.value); break;
-      case 'remove_node': el.remove(); break;
+    if (!e.data) return;
+    if (e.data.type === 'pc:apply-patch') {
+      var patch = e.data.patch;
+      var el = document.querySelector('[data-pc-key="' + patch.nodeStableKey + '"]');
+      if (!el) return;
+      switch (patch.op) {
+        case 'set_text': el.textContent = patch.payload.text; break;
+        case 'set_attr': el.setAttribute(patch.payload.attr, patch.payload.value); break;
+        case 'replace_asset':
+          if (el.tagName === 'IMG') { el.src = patch.payload.src; if (patch.payload.alt) el.alt = patch.payload.alt; }
+          break;
+        case 'set_style_token': el.style.setProperty(patch.payload.property, patch.payload.value); break;
+        case 'remove_node': el.remove(); break;
+      }
+      window.parent.postMessage({ type: 'pc:patch-applied', stableKey: patch.nodeStableKey }, '*');
     }
-    window.parent.postMessage({ type: 'pc:patch-applied', stableKey: patch.nodeStableKey }, '*');
+    if (e.data.type === 'pc:select-node') {
+      clearSelection();
+      var sel = document.querySelector('[data-pc-key="' + e.data.stableKey + '"]');
+      if (sel) sel.setAttribute('data-pc-selected', '');
+    }
   });
+})();
 </script>`
 
     sectionHtml = resolveRelativeUrls(sectionHtml, pageOrigin)
@@ -1184,9 +1343,14 @@ app.get('/api/sections/:sectionId/editable-render', async (req, res) => {
     const html = buildRenderDocument(sectionHtml, pageOrigin, {
       skipBase: true,
       extraHead: `${cssLink}<style>
-  [data-pc-key] { cursor: pointer; transition: outline 0.15s; }
-  [data-pc-key]:hover { outline: 2px solid rgba(59,130,246,0.4); }
-  [data-pc-selected] { outline: 2px solid #3b82f6 !important; box-shadow: 0 0 0 4px rgba(59,130,246,0.15); }
+  [data-pc-key] { cursor: pointer; transition: outline 0.15s, background 0.15s; }
+  [data-pc-key][data-pc-highlight] { outline: 2px solid rgba(59,130,246,0.4); outline-offset: 2px; }
+  [data-pc-selected] { outline: 2px solid #3b82f6 !important; outline-offset: 2px; box-shadow: 0 0 0 4px rgba(59,130,246,0.15); }
+  [data-pc-editing] { outline: 2px solid #3b82f6 !important; outline-offset: 2px; background: rgba(59,130,246,0.05) !important; box-shadow: 0 0 0 4px rgba(59,130,246,0.15); cursor: text !important; }
+  .pc-tooltip { position: absolute; z-index: 99999; background: #1e293b; color: #fff; font-size: 11px; font-family: -apple-system, sans-serif; padding: 4px 10px; border-radius: 4px; white-space: nowrap; pointer-events: none; display: none; box-shadow: 0 2px 8px rgba(0,0,0,0.2); }
+  .pc-img-overlay { position: absolute; z-index: 99998; background: rgba(59,130,246,0.15); border: 2px solid #3b82f6; border-radius: 4px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+  .pc-img-overlay-content { background: #3b82f6; color: #fff; padding: 8px 16px; border-radius: 6px; font-size: 13px; font-family: -apple-system, sans-serif; font-weight: 600; box-shadow: 0 2px 8px rgba(0,0,0,0.2); }
+  .pc-img-overlay-content:hover { background: #2563eb; }
 </style>`,
       extraBodyEnd: editorScript
     })
