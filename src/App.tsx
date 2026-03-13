@@ -13,6 +13,7 @@ type View = 'editor' | 'preview' | 'library' | 'projects'
 
 const CANVAS_STORAGE_KEY = 'partcopy:canvas'
 const CANVAS_STORAGE_VERSION = 1
+const EXCLUDED_FAMILIES = new Set(['navigation', 'footer'])
 
 function loadCanvasFromStorage(): CanvasBlock[] {
   try {
@@ -164,19 +165,30 @@ export default function App() {
   }, [])
 
   const addSavedToCanvas = useCallback((section: SourceSection, atIndex?: number) => {
-    if (EXCLUDED_FAMILIES.has(section.block_family)) return
+    console.log('[addSavedToCanvas]', section.id, section.block_family, { atIndex })
+    if (EXCLUDED_FAMILIES.has(section.block_family)) {
+      console.log('[addSavedToCanvas] excluded family:', section.block_family)
+      return
+    }
     setSections(prev => {
-      if (prev.find(s => s.id === section.id)) return prev
+      if (prev.find(s => s.id === section.id)) {
+        console.log('[addSavedToCanvas] section already in state:', section.id)
+        return prev
+      }
       return [...prev, section]
     })
     setCanvas(prev => {
-      if (prev.some(c => c.sectionId === section.id)) return prev
+      if (prev.some(c => c.sectionId === section.id)) {
+        console.log('[addSavedToCanvas] already on canvas:', section.id)
+        return prev
+      }
       const newBlock = { id: crypto.randomUUID(), sectionId: section.id, position: 0 }
       if (atIndex !== undefined && atIndex >= 0 && atIndex <= prev.length) {
         const next = [...prev]
         next.splice(atIndex, 0, newBlock)
         return next.map((c, i) => ({ ...c, position: i }))
       }
+      console.log('[addSavedToCanvas] added block:', newBlock.id, 'canvas size:', prev.length + 1)
       return [...prev, { ...newBlock, position: prev.length }]
     })
     setView('editor')
@@ -203,7 +215,6 @@ export default function App() {
     setCanvas(prev => prev.filter(c => c.sectionId !== sectionId))
   }, [])
 
-  const EXCLUDED_FAMILIES = new Set(['navigation', 'footer'])
   const canvasItems = canvas.map(c => ({
     canvas: c,
     section: sections.find(s => s.id === c.sectionId)!
