@@ -62,9 +62,9 @@ export function Canvas({ items, onRemove, onMove }: Props) {
       <main className="canvas">
         <div className="canvas-empty">
           <div className="canvas-empty-icon">&#10010;</div>
-          <h3>Canvas</h3>
-          <p>左のパーツにホバーして「+ Canvas」で配置</p>
-          <p className="canvas-hint">ドラッグ&ドロップで順序変更</p>
+          <h3>キャンバス</h3>
+          <p>左の構成パーツから選んで配置してください</p>
+          <p className="canvas-hint">ドラッグ&ドロップでページ構成を組み立てます</p>
         </div>
       </main>
     )
@@ -74,7 +74,7 @@ export function Canvas({ items, onRemove, onMove }: Props) {
     <div className="canvas-with-inspector">
       <main className="canvas">
         <div className="canvas-header">
-          <h2>Canvas ({items.length} blocks)</h2>
+          <h2>キャンバス ({items.length} ブロック)</h2>
           {editingIndex !== null && (
             <button className="inspector-btn" onClick={() => { setEditingIndex(null); setSelectedNode(null) }}>
               編集を閉じる

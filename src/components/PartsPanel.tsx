@@ -1,27 +1,8 @@
 import React, { useState, useMemo } from 'react'
 import { SourceSection } from '../types'
 import { SourcePreviewFrame } from './SourcePreviewFrame'
-import { FAMILY_COLORS } from '../constants'
-
-const FAMILY_LABELS: Record<string, string> = {
-  navigation: 'Nav',
-  hero: 'Hero',
-  feature: 'Feature',
-  social_proof: 'Social Proof',
-  stats: 'Stats',
-  pricing: 'Pricing',
-  faq: 'FAQ',
-  content: 'Content',
-  cta: 'CTA',
-  contact: 'Contact',
-  recruit: 'Recruit',
-  footer: 'Footer',
-  news_list: 'News',
-  timeline: 'Timeline',
-  company_profile: 'Company',
-  gallery: 'Gallery',
-  logo_cloud: 'Logo Cloud'
-}
+import { FAMILY_COLORS, FAMILY_META_MAP } from '../constants'
+import { CodePanel } from './CodePanel'
 
 
 type SortOption = 'position' | 'confidence' | 'family' | 'source'
@@ -40,6 +21,7 @@ export function PartsPanel({ sections, onAdd, onRemove }: Props) {
   const [onlyCta, setOnlyCta] = useState(false)
   const [onlyForm, setOnlyForm] = useState(false)
   const [onlyImages, setOnlyImages] = useState(false)
+  const [codeViewId, setCodeViewId] = useState<string | null>(null)
 
   const familyCounts = sections.reduce<Record<string, number>>((acc, section) => {
     const family = section.block_family || 'content'
@@ -100,7 +82,7 @@ export function PartsPanel({ sections, onAdd, onRemove }: Props) {
       <aside className="parts-panel">
         <div className="parts-empty">
           <div className="parts-empty-icon">&#9881;</div>
-          <p>URLを入力してサイトのパーツを抽出してください</p>
+          <p>サイトURLを入力して構造パターンを分析してください</p>
         </div>
       </aside>
     )
@@ -110,7 +92,7 @@ export function PartsPanel({ sections, onAdd, onRemove }: Props) {
     <aside className="parts-panel">
       <div className="parts-header">
         <div className="parts-header-row">
-          <h2>Parts ({sections.length})</h2>
+          <h2>構成パーツ ({sections.length})</h2>
           <span className="parts-results-count">{filtered.length}件表示</span>
         </div>
         <div className="parts-management-bar">
@@ -126,10 +108,10 @@ export function PartsPanel({ sections, onAdd, onRemove }: Props) {
             value={sortBy}
             onChange={event => setSortBy(event.target.value as SortOption)}
           >
-            <option value="position">抽出順</option>
-            <option value="confidence">信頼度順</option>
-            <option value="family">family順</option>
-            <option value="source">source順</option>
+            <option value="position">分析順</option>
+            <option value="confidence">品質スコア順</option>
+            <option value="family">パターン順</option>
+            <option value="source">参照元順</option>
           </select>
         </div>
         <div className="parts-toggle-row">
@@ -150,7 +132,7 @@ export function PartsPanel({ sections, onAdd, onRemove }: Props) {
         </div>
         <div className="parts-filters">
           <button className={`filter-btn ${filter === 'all' ? 'active' : ''}`} onClick={() => setFilter('all')}>
-            All ({sections.length})
+            全て ({sections.length})
           </button>
           {Object.entries(familyCounts)
             .sort((a, b) => b[1] - a[1])
@@ -161,7 +143,7 @@ export function PartsPanel({ sections, onAdd, onRemove }: Props) {
                 onClick={() => setFilter(family)}
               >
                 <span className="filter-dot" style={{ background: FAMILY_COLORS[family] || '#94a3b8' }} />
-                {FAMILY_LABELS[family] || family} ({count})
+                {FAMILY_META_MAP[family]?.label || family} ({count})
               </button>
             ))}
         </div>
@@ -188,13 +170,22 @@ export function PartsPanel({ sections, onAdd, onRemove }: Props) {
               <SourcePreviewFrame htmlUrl={section.htmlUrl} maxHeight={300} scale={0.45} />
               <div className="part-overlay-top">
                 <span className="part-type-badge" style={{ background: FAMILY_COLORS[section.block_family] || '#94a3b8' }}>
-                  {FAMILY_LABELS[section.block_family] || section.block_family}
+                  {FAMILY_META_MAP[section.block_family]?.label || section.block_family}
                 </span>
                 <span className="part-confidence">{Math.round(section.classifier_confidence * 100)}%</span>
+                {section.is_sub_component && (
+                  <span className="part-sub-badge">部品</span>
+                )}
+                {section.source_sites?.genre === 'reference' && (
+                  <span className="part-reference-badge">参考</span>
+                )}
               </div>
+              <button className="card-code-btn" onClick={(e) => { e.stopPropagation(); setCodeViewId(section.id) }} title="コードを見る">
+                &lt;/&gt;
+              </button>
               {hoveredId === section.id && (
                 <div className="part-overlay-actions">
-                  <button className="add-btn-large" onClick={() => onAdd(section.id)}>+ Canvas</button>
+                  <button className="add-btn-large" onClick={() => onAdd(section.id)}>+ 追加</button>
                   <button className="remove-btn-small" onClick={() => onRemove(section.id)}>削除</button>
                 </div>
               )}
@@ -216,6 +207,12 @@ export function PartsPanel({ sections, onAdd, onRemove }: Props) {
           </div>
         ))}
       </div>
+
+      <CodePanel
+        sectionId={codeViewId}
+        sections={sections}
+        onClose={() => setCodeViewId(null)}
+      />
     </aside>
   )
 }

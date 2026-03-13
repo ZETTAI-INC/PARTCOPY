@@ -107,24 +107,19 @@ export function Preview({ items }: Props) {
   return (
     <div className="preview-container">
       <div className="preview-mode-bar">
-        <span className="preview-label">
-          {optimizedHtml ? 'AI Optimized Preview' : 'Live Preview'}
-        </span>
+        <div className="preview-bar-left">
+          <span className="preview-label">
+            {optimizedHtml ? 'AI統一プレビュー' : 'プレビュー'}
+          </span>
+          <span className="preview-count">{items.length} セクション</span>
+        </div>
         <div className="preview-actions">
-          {optimizedHtml ? (
+          {optimizedHtml && (
             <button
               className="preview-action-btn reset-btn"
               onClick={() => setOptimizedHtml(null)}
             >
               元に戻す
-            </button>
-          ) : (
-            <button
-              className="preview-action-btn optimize-btn"
-              onClick={() => setShowConfigModal(true)}
-              disabled={optimizing}
-            >
-              {optimizing ? '最適化中...' : 'AI最適化'}
             </button>
           )}
           <button
@@ -132,7 +127,7 @@ export function Preview({ items }: Props) {
             onClick={handleExport}
             disabled={exporting}
           >
-            {exporting ? 'Exporting...' : 'Download HTML'}
+            {exporting ? '出力中...' : 'HTML出力'}
           </button>
         </div>
       </div>
@@ -140,8 +135,8 @@ export function Preview({ items }: Props) {
       {optimizing && (
         <div className="optimize-loading">
           <div className="optimize-spinner" />
-          <p>Claudeがページを最適化しています...</p>
-          <p className="optimize-loading-sub">カラー統一・フォント調和・レスポンシブ最適化</p>
+          <p>AIがデザインを統一しています...</p>
+          <p className="optimize-loading-sub">配色・フォント・余白を自動調整中</p>
         </div>
       )}
 
@@ -166,7 +161,7 @@ export function Preview({ items }: Props) {
       {showConfigModal && (
         <div className="modal-overlay" onClick={() => setShowConfigModal(false)}>
           <div className="modal optimize-config-modal" onClick={e => e.stopPropagation()}>
-            <h3>AI最適化の設定</h3>
+            <h3>デザイン統一の設定</h3>
             <div className="optimize-form">
               <label>
                 ブランドカラー
@@ -202,7 +197,7 @@ export function Preview({ items }: Props) {
                 キャンセル
               </button>
               <button className="modal-btn primary" onClick={handleOptimize}>
-                最適化を実行
+                統一を実行
               </button>
             </div>
           </div>

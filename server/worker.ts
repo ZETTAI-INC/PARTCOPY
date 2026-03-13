@@ -360,7 +360,10 @@ async function processJob(job: any) {
     // ========== Phase 3: Section Detection ==========
     await setCrawlRunStatus(job.id, { status: 'normalizing' })
 
-    const sections = await detectSections(page)
+    const sections = await Promise.race([
+      detectSections(page),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Section detection timed out after 45s')), 45000))
+    ])
     logger.info('Sections detected', { jobId: job.id, sectionCount: sections.length })
 
     // Build URL rewrite map for section HTML
@@ -394,6 +397,52 @@ async function processJob(job: any) {
         id: section.idTokens[0] || ''
       }
       const classification = classifySection(rawForClassifier, section.index, sections.length)
+
+      // Skip nav/footer — these are always site-specific and not reusable
+      const SKIP_FAMILIES = new Set(['navigation', 'footer'])
+      if (SKIP_FAMILIES.has(classification.type)) {
+        logger.debug('Section skipped (nav/footer)', {
+          jobId: job.id, sectionIndex: section.index, family: classification.type
+        })
+        continue
+      }
+
+      // Quality filter: skip low-quality sections
+      const MIN_TEXT_LENGTH = 30
+      const MIN_SECTION_HEIGHT = 60
+      const isLowQuality = (
+        section.textContent.trim().length < MIN_TEXT_LENGTH &&
+        section.features.imageCount === 0 &&
+        section.features.formCount === 0
+      ) || section.boundingBox.height < MIN_SECTION_HEIGHT
+
+      if (isLowQuality && classification.confidence < 0.7) {
+        logger.debug('Section skipped (low quality)', {
+          jobId: job.id, sectionIndex: section.index,
+          textLen: section.textContent.trim().length,
+          height: section.boundingBox.height,
+          confidence: classification.confidence
+        })
+        continue
+      }
+
+      // Skip sections with excessively large DOM (prevents hangs)
+      const MAX_SECTION_HTML_SIZE = 500_000 // 500KB
+      if (section.outerHTML.length > MAX_SECTION_HTML_SIZE) {
+        logger.warn('Section skipped (DOM too large)', { jobId: job.id, sectionIndex: section.index, htmlSize: section.outerHTML.length })
+        continue
+      }
+
+      // Reusability score
+      const reusabilityScore = Math.min(1, (
+        classification.confidence * 0.4 +
+        (section.textContent.trim().length > 50 ? 0.15 : 0) +
+        (section.features.headingCount > 0 ? 0.15 : 0) +
+        (section.features.imageCount > 0 ? 0.1 : 0) +
+        (section.features.buttonCount > 0 ? 0.1 : 0) +
+        (section.boundingBox.height > 200 ? 0.1 : 0)
+      ))
+
       const canonical = canonicalizeSection(section, classification.type)
       const finalPageUrl = page.url()
 
@@ -446,11 +495,16 @@ async function processJob(job: any) {
         repeated_child_pattern: section.features.repeatedChildPattern,
         class_tokens: section.classTokens,
         id_tokens: section.idTokens,
-        computed_style_summary: styleSummary
+        computed_style_summary: styleSummary,
+        quality_score: reusabilityScore,
+        // is_sub_component: not yet in Supabase schema
       })
 
       try {
-        const snapshot = await parseSectionDOM(page, section, section.index)
+        const snapshot = await Promise.race([
+          parseSectionDOM(page, section, section.index),
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error('DOM snapshot timed out after 30s')), 30000))
+        ])
         if (snapshot.resolvedHtml && snapshot.nodes.length > 0) {
           const resolvedHtml = rewriteStoredHtml(snapshot.resolvedHtml, finalPageUrl, dl.pageOrigin, sortedEntries, urlMap)
           const resolvedPath = `${site.id}/${job.id}/resolved_${section.index}.html`

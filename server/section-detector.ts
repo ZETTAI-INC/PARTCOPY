@@ -43,6 +43,7 @@ export interface DetectedSection {
   }
   classTokens: string[]
   idTokens: string[]
+  isSubComponent: boolean
 }
 
 export async function detectSections(page: Page): Promise<DetectedSection[]> {
@@ -51,7 +52,9 @@ export async function detectSections(page: Page): Promise<DetectedSection[]> {
 
     const MIN_HEIGHT = 40
     const MIN_WIDTH = 200
-    const MAX_SECTION_HEIGHT_RATIO = 1.5 // sections taller than 1.5x viewport get unwrapped
+    const SUB_MIN_HEIGHT = 80  // サブコンポーネントの最小高さ
+    const SUB_MIN_WIDTH = 250
+    const MAX_SECTION_HEIGHT_RATIO = 1.2 // sections taller than 1.2x viewport get unwrapped (was 1.5)
     const IGNORE_TAGS = new Set(['script', 'style', 'link', 'meta', 'noscript', 'br', 'hr', 'svg'])
     const HARD_SECTION_TAGS = new Set(['nav', 'header', 'footer'])
     const SECTIONISH_TAGS = new Set(['header', 'nav', 'main', 'section', 'article', 'aside', 'footer'])
@@ -296,6 +299,93 @@ export async function detectSections(page: Page): Promise<DetectedSection[]> {
 
     uniqueSections.sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)
 
+    // ---- Step 4b: Extract UI components (cards, buttons, CTAs, carousels) ----
+    const subComponents: Element[] = []
+
+    // 4b-1: Repeated children (cards, grid items) from large sections
+    for (const section of uniqueSections) {
+      const rect = section.getBoundingClientRect()
+      if (rect.height < 200) continue
+
+      const children = visibleChildren(section)
+      if (children.length < 2) continue
+
+      const childSignatures: Record<string, Element[]> = {}
+      for (const child of children) {
+        const sig = getClassSignature(child)
+        if (!childSignatures[sig]) childSignatures[sig] = []
+        childSignatures[sig].push(child)
+      }
+
+      for (const [_sig, elements] of Object.entries(childSignatures)) {
+        if (elements.length < 2) continue
+        // Take first representative only for repeated patterns
+        const el = elements[0]
+        const childRect = el.getBoundingClientRect()
+        if (childRect.height < SUB_MIN_HEIGHT || childRect.width < SUB_MIN_WIDTH) continue
+        if (uniqueSections.includes(el)) continue
+        const textLen = (el.textContent || '').trim().length
+        if (textLen < 20 && el.querySelectorAll('img').length === 0) continue
+        subComponents.push(el)
+      }
+    }
+
+    // 4b-2: Standalone UI components found anywhere in the page
+    const UI_COMPONENT_SELECTORS = [
+      // Cards
+      '[class*="card"]:not(li)',
+      '[class*="item"]:not(li):not([class*="menu"])',
+      '[class*="tile"]',
+      // CTA blocks
+      '[class*="cta"]',
+      '[class*="banner"]',
+      // Carousels / Sliders
+      '[class*="carousel"]', '[class*="slider"]', '[class*="swiper"]',
+      '[class*="slick"]', '[class*="splide"]', '[class*="slide"]:not([class*="sidebar"])',
+      // Pricing cards
+      '[class*="price"]', '[class*="plan"]',
+      // Testimonials
+      '[class*="testimonial"]', '[class*="review"]', '[class*="voice"]',
+      // Forms (standalone)
+      'form',
+    ]
+
+    const uiCandidates = document.querySelectorAll(UI_COMPONENT_SELECTORS.join(', '))
+    for (const el of Array.from(uiCandidates)) {
+      const elRect = el.getBoundingClientRect()
+      // Must be visible and substantial
+      if (elRect.height < 60 || elRect.width < 200) continue
+      if (elRect.height > vh * 1.5) continue // Too big = probably a wrapper
+      if (isHiddenElement(el)) continue
+      // Skip if already captured
+      if (uniqueSections.includes(el)) continue
+      if (subComponents.includes(el)) continue
+      // Skip if fully contained by an existing sub
+      const alreadyCovered = [...uniqueSections, ...subComponents].some(s => s.contains(el) && s !== el && s.getBoundingClientRect().height < el.getBoundingClientRect().height * 2)
+      if (alreadyCovered) continue
+      // Must have content
+      const textLen = (el.textContent || '').trim().length
+      const hasImg = el.querySelectorAll('img').length > 0
+      const hasBtn = el.querySelectorAll('button, a[href], [class*="btn"]').length > 0
+      const hasForm = el.querySelectorAll('input, textarea, select').length > 0
+      if (textLen < 15 && !hasImg && !hasBtn && !hasForm) continue
+
+      subComponents.push(el)
+    }
+
+    // Deduplicate sub-components
+    const subSeen = new Set<Element>(uniqueSections)
+    for (const sub of subComponents) {
+      if (subSeen.has(sub)) continue
+      const containedBySub = subComponents.some(other => other !== sub && other.contains(sub))
+      if (containedBySub) continue
+      subSeen.add(sub)
+      uniqueSections.push(sub)
+    }
+
+    // Re-sort by position
+    uniqueSections.sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)
+
     const totalSections = uniqueSections.length
 
     // ---- Helper: DOM path ----
@@ -501,7 +591,8 @@ export async function detectSections(page: Page): Promise<DetectedSection[]> {
           repeatedChildPattern: detectRepeatedPattern(el)
         },
         classTokens: [...new Set(classTokens)].slice(0, 50),
-        idTokens
+        idTokens,
+        isSubComponent: subComponents.includes(el)
       }
     })
   })

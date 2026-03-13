@@ -1,12 +1,7 @@
 import React, { useState } from 'react'
 
-const GENRE_PRESETS = [
-  'SaaS', 'EC', 'BtoB', 'BtoC', '士業', '医療', '美容', '飲食',
-  '不動産', '教育', '採用', '金融', 'IT', '製造', 'コンサル', 'その他'
-]
-
 interface Props {
-  onSubmit: (url: string, genre: string, tags: string[]) => void
+  onSubmit: (url: string, genre: string, tags: string[], mode: 'own' | 'reference') => void
   loading: boolean
   error: string | null
   jobStatus: string | null
@@ -14,57 +9,68 @@ interface Props {
 
 export function URLInput({ onSubmit, loading, error, jobStatus }: Props) {
   const [url, setUrl] = useState('')
-  const [genre, setGenre] = useState('')
-  const [tagInput, setTagInput] = useState('')
+  const [mode, setMode] = useState<'own' | 'reference'>('own')
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     if (!url.trim() || loading) return
     let finalUrl = url.trim()
     if (!/^https?:\/\//.test(finalUrl)) finalUrl = 'https://' + finalUrl
-    const tags = tagInput.split(',').map(t => t.trim()).filter(Boolean)
-    onSubmit(finalUrl, genre, tags)
+    onSubmit(finalUrl, '', [], mode)
   }
 
   return (
     <div className="url-input-bar">
-      <form onSubmit={handleSubmit} className="url-form">
-        <div className="url-form-main">
-          <input
-            type="text"
-            value={url}
-            onChange={e => setUrl(e.target.value)}
-            placeholder="URLを入力 (例: https://example.co.jp)"
-            className="url-field"
-            disabled={loading}
-          />
-          <button type="submit" className="extract-btn" disabled={loading}>
-            {loading ? <span className="spinner" /> : 'Extract'}
+      <div className="url-section-inner">
+        <div className="url-mode-toggle" role="tablist">
+          <button
+            role="tab"
+            aria-selected={mode === 'own'}
+            className={`mode-pill ${mode === 'own' ? 'active' : ''}`}
+            onClick={() => setMode('own')}
+          >
+            自社サイト分析
+          </button>
+          <button
+            role="tab"
+            aria-selected={mode === 'reference'}
+            className={`mode-pill ${mode === 'reference' ? 'active' : ''}`}
+            onClick={() => setMode('reference')}
+          >
+            参考パターン収集
           </button>
         </div>
-        <div className="url-form-tags">
-          <select value={genre} onChange={e => setGenre(e.target.value)} className="genre-select">
-            <option value="">-- Genre --</option>
-            {GENRE_PRESETS.map(g => <option key={g} value={g}>{g}</option>)}
-          </select>
-          <input
-            type="text"
-            value={genre}
-            onChange={e => setGenre(e.target.value)}
-            placeholder="or type genre"
-            className="genre-custom"
-          />
-          <input
-            type="text"
-            value={tagInput}
-            onChange={e => setTagInput(e.target.value)}
-            placeholder="Tags (comma separated)"
-            className="tag-input"
-          />
-        </div>
-      </form>
-      {jobStatus && <div className="job-status">{jobStatus}</div>}
-      {error && <div className="error-msg">{error}</div>}
+
+        <form onSubmit={handleSubmit} className="url-form">
+          <div className="url-form-main">
+            <div className="url-field-wrap">
+              <svg className="url-field-icon" width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <path d="M6.5 1.5C3.73858 1.5 1.5 3.73858 1.5 6.5C1.5 9.26142 3.73858 11.5 6.5 11.5C9.26142 11.5 11.5 9.26142 11.5 6.5C11.5 3.73858 9.26142 1.5 6.5 1.5Z" stroke="currentColor" strokeWidth="1.5"/>
+                <path d="M10.5 10.5L14.5 14.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+              </svg>
+              <input
+                type="text"
+                value={url}
+                onChange={e => setUrl(e.target.value)}
+                placeholder={mode === 'own' ? '自社サイトのURLを入力' : '参考にしたいサイトのURLを入力'}
+                className="url-field"
+                disabled={loading}
+              />
+            </div>
+            <button type="submit" className="extract-btn" disabled={loading}>
+              {loading ? <span className="spinner" /> : '分析する'}
+            </button>
+          </div>
+        </form>
+
+        {jobStatus && (
+          <div className="url-status">
+            <span className="url-status-dot" />
+            {jobStatus}
+          </div>
+        )}
+        {error && <div className="url-error">{error}</div>}
+      </div>
     </div>
   )
 }

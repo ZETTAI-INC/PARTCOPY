@@ -65,6 +65,31 @@ export function classifySection(section: RawSection, index: number, total: numbe
     return { type: 'hero', confidence: 0.7 }
   }
 
+  // Carousel / Slider
+  if (cls.includes('carousel') || cls.includes('slider') || cls.includes('swiper') ||
+    cls.includes('slick') || cls.includes('splide') || cls.includes('glide') ||
+    cls.includes('slide') || id.includes('carousel') || id.includes('slider')) {
+    return { type: 'carousel', confidence: 0.9 }
+  }
+
+  // Tabs
+  if (cls.includes('tab') || id.includes('tab')) {
+    if (cls.includes('table')) { /* skip table */ }
+    else return { type: 'tabs', confidence: 0.85 }
+  }
+
+  // Accordion
+  if (cls.includes('accordion') || cls.includes('collapse') || cls.includes('toggle') ||
+    id.includes('accordion')) {
+    return { type: 'accordion', confidence: 0.85 }
+  }
+
+  // Modal / Dialog
+  if (cls.includes('modal') || cls.includes('dialog') || cls.includes('popup') ||
+    id.includes('modal') || id.includes('dialog')) {
+    return { type: 'modal', confidence: 0.8 }
+  }
+
   // FAQ
   if (cls.includes('faq') || id.includes('faq') ||
     text.includes('よくある質問') || text.includes('faq') ||
@@ -127,8 +152,15 @@ export function classifySection(section: RawSection, index: number, total: numbe
 
   // CTA
   if (cls.includes('cta') || id.includes('cta') ||
+    cls.includes('banner') || cls.includes('action') ||
     (section.hasCTA && section.headingCount <= 2 && section.childCount < 10)) {
     return { type: 'cta', confidence: 0.8 }
+  }
+
+  // Card (individual card component)
+  if ((cls.includes('card') || cls.includes('tile') || cls.includes('item')) &&
+    section.childCount <= 10 && section.childCount >= 1) {
+    return { type: 'card', confidence: 0.75 }
   }
 
   // Feature

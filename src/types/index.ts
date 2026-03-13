@@ -56,6 +56,8 @@ export interface SourceSection {
   block_variant?: string
   classifier_type: string
   classifier_confidence: number
+  quality_score?: number
+  is_sub_component?: boolean
   features_jsonb: Record<string, any>
   text_summary: string
   thumbnail_storage_path?: string

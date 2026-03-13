@@ -674,6 +674,10 @@ export async function listLibrarySections(filters: {
     }
   })
 
+  // Always exclude navigation and footer
+  const EXCLUDED_FAMILIES = new Set(['navigation', 'footer'])
+  sections = sections.filter(section => !EXCLUDED_FAMILIES.has(section.block_family || ''))
+
   if (filters.genre) sections = sections.filter(section => section.source_sites?.genre === filters.genre)
   if (filters.family) sections = sections.filter(section => section.block_family === filters.family)
   if (filters.industry) sections = sections.filter(section => section.source_sites?.industry === filters.industry)
@@ -723,8 +727,10 @@ export async function listLibrarySections(filters: {
 
 export async function getGenreSummary() {
   const db = await readDb()
+  const EXCLUDED = new Set(['navigation', 'footer'])
   const sitesById = new Map(db.source_sites.map(s => [s.id, s]))
   const counts = db.source_sections.reduce<Record<string, number>>((acc, section) => {
+    if (EXCLUDED.has(section.block_family || '')) return acc
     const site = sitesById.get(section.site_id)
     const genre = site?.genre || 'untagged'
     acc[genre] = (acc[genre] || 0) + 1
@@ -738,7 +744,9 @@ export async function getGenreSummary() {
 
 export async function getFamilySummary() {
   const db = await readDb()
+  const EXCLUDED = new Set(['navigation', 'footer'])
   const counts = db.source_sections.reduce<Record<string, number>>((acc, section) => {
+    if (EXCLUDED.has(section.block_family || '')) return acc
     const familyKey = section.block_family || 'content'
     acc[familyKey] = (acc[familyKey] || 0) + 1
     return acc

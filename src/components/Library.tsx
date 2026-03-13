@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { SourceSection, GenreInfo, BlockFamilyInfo } from '../types'
 import { SourcePreviewFrame } from './SourcePreviewFrame'
-import { FAMILY_COLORS } from '../constants'
+import { FAMILY_COLORS, FAMILY_META, FAMILY_META_MAP, FAMILY_GROUP_LABELS } from '../constants'
+import { CodePanel } from './CodePanel'
 
 type SortOption = 'newest' | 'confidence' | 'family' | 'source'
 
@@ -23,7 +24,9 @@ export function Library({ onAddToCanvas }: Props) {
   const [onlyCta, setOnlyCta] = useState(false)
   const [onlyForm, setOnlyForm] = useState(false)
   const [onlyImages, setOnlyImages] = useState(false)
+  const [onlySubs, setOnlySubs] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [codeViewId, setCodeViewId] = useState<string | null>(null)
 
   const familyLabelMap = families.reduce<Record<string, string>>((acc, family) => {
     acc[family.key] = family.label_ja || family.label || family.key
@@ -64,6 +67,7 @@ export function Library({ onAddToCanvas }: Props) {
       if (onlyCta) params.set('hasCta', 'true')
       if (onlyForm) params.set('hasForm', 'true')
       if (onlyImages) params.set('hasImages', 'true')
+      if (onlySubs) params.set('onlySubs', 'true')
 
       const response = await fetch(`/api/library?${params.toString()}`)
       if (!response.ok) {
@@ -79,7 +83,7 @@ export function Library({ onAddToCanvas }: Props) {
     } finally {
       setLoading(false)
     }
-  }, [limit, onlyCta, onlyForm, onlyImages, query, selectedFamily, selectedGenre, sortBy])
+  }, [limit, onlyCta, onlyForm, onlyImages, onlySubs, query, selectedFamily, selectedGenre, sortBy])
 
   useEffect(() => {
     fetchMeta()
@@ -115,6 +119,7 @@ export function Library({ onAddToCanvas }: Props) {
     setOnlyCta(false)
     setOnlyForm(false)
     setOnlyImages(false)
+    setOnlySubs(false)
   }
 
   const totalGenreCount = genres.reduce((sum, genre) => sum + genre.count, 0)
@@ -125,6 +130,7 @@ export function Library({ onAddToCanvas }: Props) {
     onlyCta ||
     onlyForm ||
     onlyImages ||
+    onlySubs ||
     sortBy !== 'newest' ||
     limit !== 60
   )
@@ -132,9 +138,9 @@ export function Library({ onAddToCanvas }: Props) {
   return (
     <div className="library">
       <div className="library-sidebar">
-        <h3 className="library-sidebar-title">Genres</h3>
+        <h3 className="library-sidebar-title">業種カテゴリ</h3>
         <button className={`library-genre-btn ${!selectedGenre ? 'active' : ''}`} onClick={() => setSelectedGenre(null)}>
-          All ({totalGenreCount})
+          全て ({totalGenreCount})
         </button>
         {genres.map(genre => (
           <button
@@ -146,74 +152,89 @@ export function Library({ onAddToCanvas }: Props) {
           </button>
         ))}
 
-        <h3 className="library-sidebar-title" style={{ marginTop: 20 }}>Block Families</h3>
-        <button className={`library-genre-btn ${!selectedFamily ? 'active' : ''}`} onClick={() => setSelectedFamily(null)}>
-          All families
+        <h3 className="library-sidebar-title" style={{ marginTop: 20 }}>セクションの種類</h3>
+        <button className={`library-family-btn ${!selectedFamily ? 'active' : ''}`} onClick={() => setSelectedFamily(null)}>
+          <span className="family-btn-dot" style={{ background: 'var(--text)' }} />
+          <span className="family-btn-text">
+            <span className="family-btn-label">すべて表示</span>
+          </span>
         </button>
-        {families.map(family => (
-          <button
-            key={family.key}
-            className={`library-genre-btn ${selectedFamily === family.key ? 'active' : ''}`}
-            onClick={() => setSelectedFamily(family.key)}
-          >
-            <span className="filter-dot" style={{ background: FAMILY_COLORS[family.key] || '#94a3b8' }} />
-            {family.label_ja} {typeof family.count === 'number' ? `(${family.count})` : ''}
-          </button>
-        ))}
+        {(['page_top', 'main_content', 'conversion', 'page_bottom'] as const).map(group => {
+          const groupFamilies = FAMILY_META.filter(m => m.group === group)
+            .filter(m => {
+              const serverFamily = families.find(f => f.key === m.key)
+              return serverFamily && (serverFamily.count ?? 0) > 0
+            })
+          if (groupFamilies.length === 0) return null
+          return (
+            <div key={group} className="family-group">
+              <div className="family-group-label">{FAMILY_GROUP_LABELS[group]}</div>
+              {groupFamilies.map(meta => {
+                const serverFamily = families.find(f => f.key === meta.key)
+                const count = serverFamily?.count ?? 0
+                return (
+                  <button
+                    key={meta.key}
+                    className={`library-family-btn ${selectedFamily === meta.key ? 'active' : ''}`}
+                    onClick={() => setSelectedFamily(meta.key)}
+                    title={meta.description}
+                  >
+                    <span className="family-btn-dot" style={{ background: FAMILY_COLORS[meta.key] || '#94a3b8' }} />
+                    <span className="family-btn-text">
+                      <span className="family-btn-label">{meta.label}</span>
+                      <span className="family-btn-desc">{meta.description}</span>
+                    </span>
+                    <span className="family-btn-count">{count}</span>
+                  </button>
+                )
+              })}
+            </div>
+          )
+        })}
       </div>
 
       <div className="library-main">
         <div className="library-toolbar">
-          <div className="library-toolbar-row">
+          <div className="library-search-row">
             <input
               type="search"
-              className="parts-search-input"
+              className="library-search"
               value={query}
               onChange={event => setQuery(event.target.value)}
-              placeholder="検索: domain / genre / tag / summary"
+              placeholder="検索..."
             />
             <select
-              className="parts-select"
+              className="library-sort-select"
               value={sortBy}
               onChange={event => setSortBy(event.target.value as SortOption)}
             >
-              <option value="newest">新着順</option>
-              <option value="confidence">信頼度順</option>
-              <option value="family">family順</option>
-              <option value="source">source順</option>
-            </select>
-            <select
-              className="parts-select"
-              value={String(limit)}
-              onChange={event => setLimit(Number(event.target.value))}
-            >
-              <option value="24">24件</option>
-              <option value="60">60件</option>
-              <option value="120">120件</option>
+              <option value="newest">新しい順</option>
+              <option value="confidence">スコア順</option>
+              <option value="family">種類順</option>
+              <option value="source">参照元順</option>
             </select>
           </div>
-
-          <div className="parts-toggle-row library-toggle-row">
-            <button className={`feature-toggle ${onlyImages ? 'active' : ''}`} onClick={() => setOnlyImages(prev => !prev)}>
+          <div className="library-filter-row">
+            <button className={`lib-filter-chip ${onlyImages ? 'active' : ''}`} onClick={() => setOnlyImages(prev => !prev)}>
               IMG
             </button>
-            <button className={`feature-toggle ${onlyCta ? 'active' : ''}`} onClick={() => setOnlyCta(prev => !prev)}>
+            <button className={`lib-filter-chip ${onlyCta ? 'active' : ''}`} onClick={() => setOnlyCta(prev => !prev)}>
               CTA
             </button>
-            <button className={`feature-toggle ${onlyForm ? 'active' : ''}`} onClick={() => setOnlyForm(prev => !prev)}>
+            <button className={`lib-filter-chip ${onlyForm ? 'active' : ''}`} onClick={() => setOnlyForm(prev => !prev)}>
               FORM
             </button>
-            <span className="parts-results-count">{sections.length}件表示</span>
+            <span className="library-result-count">{sections.length}件</span>
             {hasActiveFilters && (
-              <button className="inline-reset-btn" onClick={resetControls}>
-                条件をリセット
+              <button className="library-reset-link" onClick={resetControls}>
+                リセット
               </button>
             )}
           </div>
         </div>
 
         <div className="library-grid">
-          {loading && <div className="library-loading">Loading...</div>}
+          {loading && <div className="library-loading">分析データを読み込み中...</div>}
           {!loading && error && (
             <div className="library-empty">
               <p>{error}</p>
@@ -221,8 +242,8 @@ export function Library({ onAddToCanvas }: Props) {
           )}
           {!loading && !error && sections.length === 0 && (
             <div className="library-empty">
-              <p>条件に一致するパーツがありません</p>
-              <p className="library-empty-hint">フィルターを戻すか、新しい URL を抽出してください</p>
+              <p>条件に一致する構造パターンがありません</p>
+              <p className="library-empty-hint">フィルターを変更するか、新しいサイトを分析してください</p>
             </div>
           )}
           {!loading && !error && sections.map(section => (
@@ -236,12 +257,18 @@ export function Library({ onAddToCanvas }: Props) {
                 <SourcePreviewFrame htmlUrl={section.htmlUrl} maxHeight={260} scale={0.5} />
                 <div className="part-overlay-top">
                   <span className="part-type-badge" style={{ background: FAMILY_COLORS[section.block_family] || '#94a3b8' }}>
-                    {familyLabelMap[section.block_family] || section.block_family}
+                    {FAMILY_META_MAP[section.block_family]?.label || familyLabelMap[section.block_family] || section.block_family}
                   </span>
+                  {section.is_sub_component && (
+                    <span className="part-sub-badge">部品</span>
+                  )}
                 </div>
+                <button className="card-code-btn" onClick={(e) => { e.stopPropagation(); setCodeViewId(section.id) }} title="コードを見る">
+                  &lt;/&gt;
+                </button>
                 {hoveredId === section.id && (
                   <div className="part-overlay-actions">
-                    <button className="add-btn-large" onClick={() => onAddToCanvas(section)}>+ Canvas</button>
+                    <button className="add-btn-large" onClick={() => onAddToCanvas(section)}>+ 追加</button>
                     <button className="remove-btn-small" onClick={() => handleDelete(section.id)}>削除</button>
                   </div>
                 )}
@@ -264,6 +291,12 @@ export function Library({ onAddToCanvas }: Props) {
           ))}
         </div>
       </div>
+
+      <CodePanel
+        sectionId={codeViewId}
+        sections={sections}
+        onClose={() => setCodeViewId(null)}
+      />
     </div>
   )
 }

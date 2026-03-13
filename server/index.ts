@@ -355,8 +355,12 @@ async function getLibraryResults(filters: {
   const { data, error } = await query
   if (error) throw new Error(error.message)
 
+  // Always exclude navigation and footer — not reusable
+  const EXCLUDED_FAMILIES = new Set(['navigation', 'footer'])
+
   const searchTerm = normalizeSearchValue(filters.q)
   let results = (data || []).filter((section: any) => {
+    if (EXCLUDED_FAMILIES.has(section.block_family)) return false
     const featureFlags = section.features_jsonb || {}
 
     if (filters.hasCta && !featureFlags.hasCTA) return false
@@ -407,12 +411,14 @@ async function getGenreResults() {
 
   const { data, error } = await supabaseAdmin
     .from('source_sections')
-    .select('source_sites!inner(genre)')
+    .select('block_family, source_sites!inner(genre)')
 
   if (error) throw new Error(error.message)
 
+  const EXCLUDED = new Set(['navigation', 'footer'])
   const counts: Record<string, number> = {}
-  for (const row of data || []) {
+  for (const row of (data || []) as any[]) {
+    if (EXCLUDED.has(row.block_family)) continue
     const sites = Array.isArray(row.source_sites) ? row.source_sites : [row.source_sites]
     for (const site of sites) {
       const genre = site?.genre || 'untagged'
@@ -444,7 +450,9 @@ async function getFamilyResults() {
     throw new Error(error?.message || countsError?.message || 'Failed to load families')
   }
 
+  const EXCLUDED_FAM = new Set(['navigation', 'footer'])
   const counts = (sections || []).reduce((acc: Record<string, number>, row: any) => {
+    if (EXCLUDED_FAM.has(row.block_family)) return acc
     const familyKey = row.block_family || 'content'
     acc[familyKey] = (acc[familyKey] || 0) + 1
     return acc
@@ -1513,7 +1521,7 @@ app.get('/api/projects/:id/load-canvas', async (req, res) => {
 // ============================================================
 // AI Optimize
 // ============================================================
-import { optimizeWithClaude } from './ai-optimizer.js'
+import { generateFromBlueprint } from './ai-optimizer.js'
 
 app.post('/api/canvas/optimize', async (req, res) => {
   const { sectionIds, config } = req.body
@@ -1534,8 +1542,6 @@ app.post('/api/canvas/optimize', async (req, res) => {
 
   try {
     const sectionsData: Array<{ id: string; family: string; html: string; sourceUrl?: string }> = []
-    let combinedOriginalCss = ''
-    const cssBundlePaths = new Set<string>()
 
     for (const sectionId of sectionIds) {
       const record = await getRenderContext(sectionId)
@@ -1552,30 +1558,6 @@ app.post('/api/canvas/optimize', async (req, res) => {
       // Resolve relative URLs
       html = resolveRelativeUrls(html, pageOrigin)
       html = html.replace(/(["'(])\/assets\//g, `$1${serverOrigin}/assets/`)
-
-      // Collect CSS bundle
-      if (record.page.css_bundle_path && !cssBundlePaths.has(record.page.css_bundle_path)) {
-        cssBundlePaths.add(record.page.css_bundle_path)
-        let css = await readBucketText(STORAGE_BUCKETS.RAW_HTML, record.page.css_bundle_path)
-        if (!css && HAS_SUPABASE) {
-          const bundleDir = record.page.css_bundle_path.replace(/\/[^/]+$/, '')
-          const cssDir = `${bundleDir}/css`
-          const { data: cssFiles } = await supabaseAdmin.storage.from(STORAGE_BUCKETS.RAW_HTML).list(cssDir)
-          if (cssFiles && cssFiles.length > 0) {
-            const cssTexts: string[] = []
-            for (const f of cssFiles) {
-              if (!f.name.endsWith('.css') && !f.name.endsWith('.txt')) continue
-              const text = await readBucketText(STORAGE_BUCKETS.RAW_HTML, `${cssDir}/${f.name}`)
-              if (text) cssTexts.push(text)
-            }
-            css = cssTexts.join('\n')
-          }
-        }
-        if (css) {
-          css = css.replace(/url\(\s*(['"]?)\/assets\//g, `url($1${serverOrigin}/assets/`)
-          combinedOriginalCss += css + '\n'
-        }
-      }
 
       // Get block family
       let family = 'unknown'
@@ -1599,44 +1581,48 @@ app.post('/api/canvas/optimize', async (req, res) => {
       return
     }
 
-    // Call Claude for CSS harmony layer
-    const aiResult = await optimizeWithClaude(sectionsData, config || {
+    // Call Claude to generate completely new HTML from structure blueprints
+    const aiResult = await generateFromBlueprint(sectionsData, config || {
       brandColor: '#2563eb',
       industry: 'SaaS',
       targetAudience: 'ビジネスパーソン'
     })
 
-    // Build complete HTML: original CSS + AI overlay + wrapped sections
-    const wrappedSections = sectionsData.map((s, i) =>
-      `<div class="pc-s${i}" data-family="${s.family}">\n${s.html}\n</div>`
-    ).join('\n')
-
-    const fullHtml = `<!DOCTYPE html>
-<html lang="ja">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>PARTCOPY Optimized</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700;900&display=swap" rel="stylesheet">
-<style>
-/* === Original Site CSS === */
-${combinedOriginalCss}
-/* === AI Harmony Layer === */
-${aiResult.css}
-</style>
-</head>
-<body class="pc-optimized">
-${wrappedSections}
-</body>
-</html>`
-
-    res.json({ html: fullHtml, cssLength: aiResult.css.length })
+    res.json({ html: aiResult.html })
   } catch (err: any) {
     logger.error('Optimize failed', { error: err.message })
     res.status(500).json({ error: err.message })
   }
 })
+
+// ============================================================
+// CSS Scoping Helper
+// ============================================================
+
+/** Scope CSS rules under a namespace class to prevent cross-site conflicts */
+function scopeCssRules(css: string, scopeClass: string): string {
+  // Simple but effective: prefix each rule with the scope class
+  // Skip @rules (media queries, keyframes, font-face)
+  return css.replace(
+    /([^{}@]+)\{/g,
+    (match, selectors: string) => {
+      // Don't scope @-rules or already-scoped rules
+      if (selectors.trim().startsWith('@') || selectors.includes(scopeClass)) return match
+      // Scope each selector
+      const scoped = selectors
+        .split(',')
+        .map((s: string) => {
+          const trimmed = s.trim()
+          if (!trimmed || trimmed.startsWith('@') || trimmed.startsWith('from') || trimmed.startsWith('to') || /^\d+%/.test(trimmed)) return s
+          // Don't scope html/body selectors, replace them with scope class
+          if (/^(html|body)\b/.test(trimmed)) return trimmed.replace(/^(html|body)/, `.${scopeClass}`)
+          return `.${scopeClass} ${trimmed}`
+        })
+        .join(',')
+      return `${scoped}{`
+    }
+  )
+}
 
 // ============================================================
 // HTML Export
@@ -1656,6 +1642,7 @@ app.post('/api/canvas/export-html', async (req, res) => {
     const htmlParts: string[] = []
     let combinedCss = ''
     const cssBundlePaths = new Set<string>()
+    const bundleScopeMap = new Map<string, string>() // css_bundle_path -> scope class
 
     for (const sectionId of sectionIds) {
       const record = await getRenderContext(sectionId)
@@ -1672,7 +1659,19 @@ app.post('/api/canvas/export-html', async (req, res) => {
       storedHtml = resolveRelativeUrls(storedHtml, pageOrigin)
       // Resolve /assets/ paths to absolute server URLs
       storedHtml = storedHtml.replace(/(["'(])\/assets\//g, `$1${serverOrigin}/assets/`)
-      htmlParts.push(storedHtml)
+
+      // Determine scope class: reuse if same CSS bundle, otherwise create new
+      const bundlePath = record.page.css_bundle_path || `__no_bundle_${htmlParts.length}`
+      let scopeClass: string
+      if (bundleScopeMap.has(bundlePath)) {
+        scopeClass = bundleScopeMap.get(bundlePath)!
+      } else {
+        scopeClass = `pc-export-s${bundleScopeMap.size}`
+        bundleScopeMap.set(bundlePath, scopeClass)
+      }
+
+      // Wrap in scoped container with unique namespace
+      htmlParts.push(`<div class="${scopeClass}">\n${storedHtml}\n</div>`)
 
       // Collect CSS bundle (deduplicated)
       if (record.page.css_bundle_path && !cssBundlePaths.has(record.page.css_bundle_path)) {
@@ -1699,7 +1698,8 @@ app.post('/api/canvas/export-html', async (req, res) => {
         if (css) {
           // Resolve /assets/ in CSS url() too
           css = css.replace(/url\(\s*(['"]?)\/assets\//g, `url($1${serverOrigin}/assets/`)
-          combinedCss += css + '\n'
+          // Scope CSS under site-specific namespace
+          combinedCss += `/* === ${record.page.css_bundle_path} === */\n${scopeCssRules(css, scopeClass)}\n`
         }
       }
     }

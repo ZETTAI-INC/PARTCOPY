@@ -74,7 +74,7 @@ export default function App() {
         .catch(() => {})
     })
   }, [])
-  const familyCount = new Set(sections.map(section => section.block_family)).size
+
   const sourceCount = new Set(
     sections
       .map(section => section.source_sites?.normalized_domain)
@@ -127,10 +127,10 @@ export default function App() {
     }, 2000)
   }, [])
 
-  const handleExtract = useCallback(async (url: string, genre: string, tags: string[]) => {
+  const handleExtract = useCallback(async (url: string, genre: string, tags: string[], mode: 'own' | 'reference') => {
     setLoading(true)
     setError(null)
-    setJobStatus('queuing...')
+    setJobStatus('分析開始...')
     try {
       const res = await fetch('/api/extract', {
         method: 'POST',
@@ -142,7 +142,7 @@ export default function App() {
         throw new Error(data.error || 'Failed to create job')
       }
       const { jobId } = await res.json()
-      setJobStatus('queued - waiting for worker...')
+      setJobStatus('分析キュー待ち...')
       pollJob(jobId)
     } catch (err: any) {
       setError(err.message)
@@ -159,7 +159,7 @@ export default function App() {
   }, [])
 
   const addSavedToCanvas = useCallback((section: SourceSection) => {
-    // Add to sections if not already present
+    if (EXCLUDED_FAMILIES.has(section.block_family)) return
     setSections(prev => {
       if (prev.find(s => s.id === section.id)) return prev
       return [...prev, section]
@@ -192,53 +192,45 @@ export default function App() {
     setCanvas(prev => prev.filter(c => c.sectionId !== sectionId))
   }, [])
 
+  const EXCLUDED_FAMILIES = new Set(['navigation', 'footer'])
   const canvasItems = canvas.map(c => ({
     canvas: c,
     section: sections.find(s => s.id === c.sectionId)!
-  })).filter(c => c.section)
+  })).filter(c => c.section && !EXCLUDED_FAMILIES.has(c.section.block_family))
 
   return (
     <div className="app">
       <ErrorBoundary>
       <header className="app-header">
-        <div className="app-logo">
-          <h1>PARTCOPY</h1>
-          <span className="app-tagline">Site Genome OS</span>
+        <div className="header-left">
+          <a className="header-logo" onClick={() => setView('editor')}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none"><rect x="3" y="3" width="7" height="7" rx="1.5" fill="currentColor"/><rect x="14" y="3" width="7" height="7" rx="1.5" fill="currentColor" opacity="0.5"/><rect x="3" y="14" width="7" height="7" rx="1.5" fill="currentColor" opacity="0.5"/><rect x="14" y="14" width="7" height="7" rx="1.5" fill="currentColor" opacity="0.3"/></svg>
+            <span className="header-logo-text">PARTCOPY</span>
+          </a>
+          <span className="header-separator" />
+          <nav className="header-nav">
+            <button className={`header-nav-link ${view === 'editor' ? 'active' : ''}`} onClick={() => setView('editor')}>
+              エディタ
+            </button>
+            <button className={`header-nav-link ${view === 'library' ? 'active' : ''}`} onClick={() => setView('library')}>
+              ライブラリ
+            </button>
+            <button className={`header-nav-link ${view === 'preview' ? 'active' : ''}`} onClick={() => setView('preview')}>
+              プレビュー
+            </button>
+            <button className={`header-nav-link ${view === 'projects' ? 'active' : ''}`} onClick={() => setView('projects')}>
+              プロジェクト
+            </button>
+          </nav>
         </div>
-        <div className="app-actions">
-          <button className={`view-btn ${view === 'editor' ? 'active' : ''}`} onClick={() => setView('editor')}>
-            Editor
-          </button>
-          <button className={`view-btn ${view === 'library' ? 'active' : ''}`} onClick={() => setView('library')}>
-            Library
-          </button>
-          <button className={`view-btn ${view === 'preview' ? 'active' : ''}`} onClick={() => setView('preview')}>
-            Preview
-          </button>
-          <button className={`view-btn ${view === 'projects' ? 'active' : ''}`} onClick={() => setView('projects')}>
-            Projects
-          </button>
+        <div className="header-right">
+          <div className="header-stats">
+            <span className="header-stat"><strong>{sections.length}</strong> パーツ</span>
+            <span className="header-stat"><strong>{canvas.length}</strong> Canvas</span>
+            <span className="header-stat"><strong>{sourceCount}</strong> サイト</span>
+          </div>
         </div>
       </header>
-
-      <div className="workspace-summary">
-        <div className="workspace-stat">
-          <span className="workspace-stat-label">抽出パーツ</span>
-          <strong>{sections.length}</strong>
-        </div>
-        <div className="workspace-stat">
-          <span className="workspace-stat-label">ファミリー</span>
-          <strong>{familyCount}</strong>
-        </div>
-        <div className="workspace-stat">
-          <span className="workspace-stat-label">Canvas</span>
-          <strong>{canvas.length}</strong>
-        </div>
-        <div className="workspace-stat">
-          <span className="workspace-stat-label">参照サイト</span>
-          <strong>{sourceCount}</strong>
-        </div>
-      </div>
 
       {view !== 'library' && (
         <URLInput onSubmit={handleExtract} loading={loading} error={error} jobStatus={jobStatus} />
@@ -246,7 +238,9 @@ export default function App() {
 
       {view === 'editor' && (
         <div className="editor-layout">
-          <PartsPanel sections={sections} onAdd={addToCanvas} onRemove={removeSection} />
+          <div className="editor-sidebar">
+            <Library onAddToCanvas={addSavedToCanvas} />
+          </div>
           <Canvas items={canvasItems} onRemove={removeFromCanvas} onMove={moveBlock} />
         </div>
       )}
