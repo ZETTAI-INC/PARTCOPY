@@ -41,38 +41,34 @@ export default function App() {
     return () => clearTimeout(timer)
   }, [canvas])
 
-  // Restore sections for canvas items on mount
+  // Restore sections for canvas items on mount, removing nav/footer
   useEffect(() => {
     const stored = loadCanvasFromStorage()
     if (stored.length === 0) return
     const sectionIds = [...new Set(stored.map(c => c.sectionId))]
-    Promise.all(
-      sectionIds.map(id =>
-        fetch(`/api/sections/${id}/html`)
-          .then(r => r.ok ? r.json() : null)
-          .then(data => data ? { id, htmlUrl: `/api/sections/${id}/render` } : null)
-          .catch(() => null)
-      )
-    ).then(results => {
-      // Fetch full section data from library
-      fetch(`/api/library?limit=200`)
-        .then(r => r.json())
-        .then(data => {
-          const libSections: SourceSection[] = data.sections || []
-          const libMap = new Map(libSections.map((s: SourceSection) => [s.id, s]))
-          setSections(prev => {
-            const seen = new Set(prev.map(s => s.id))
-            const next = [...prev]
-            for (const id of sectionIds) {
-              if (seen.has(id) || !libMap.has(id)) continue
-              seen.add(id)
-              next.push(libMap.get(id)!)
-            }
-            return next
-          })
+    fetch(`/api/library?limit=200`)
+      .then(r => r.json())
+      .then(data => {
+        const libSections: SourceSection[] = data.sections || []
+        const libMap = new Map(libSections.map((s: SourceSection) => [s.id, s]))
+        // Clean canvas: remove blocks whose sections are nav/footer or no longer in library
+        const validIds = new Set(libSections.map(s => s.id))
+        setCanvas(prev => {
+          const cleaned = prev.filter(c => validIds.has(c.sectionId))
+          return cleaned.length !== prev.length ? cleaned : prev
         })
-        .catch(() => {})
-    })
+        setSections(prev => {
+          const seen = new Set(prev.map(s => s.id))
+          const next = [...prev]
+          for (const id of sectionIds) {
+            if (seen.has(id) || !libMap.has(id)) continue
+            seen.add(id)
+            next.push(libMap.get(id)!)
+          }
+          return next
+        })
+      })
+      .catch(() => {})
   }, [])
 
   const sourceCount = new Set(

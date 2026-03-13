@@ -65,6 +65,7 @@ interface SourceSectionRow extends JsonObject {
   classifier_confidence?: number
   text_summary?: string
   features_jsonb?: Record<string, any>
+  layout_signature?: string
   raw_html_storage_path?: string
   sanitized_html_storage_path?: string
   thumbnail_storage_path?: string
@@ -716,6 +717,35 @@ export async function listLibrarySections(filters: {
         return String(a.source_sites?.normalized_domain || '').localeCompare(String(b.source_sites?.normalized_domain || ''))
       case 'oldest':
         return new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+      case 'newest':
+      default:
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    }
+  })
+
+  // Deduplicate: same site + same family + similar layout = keep best
+  const dedupMap = new Map<string, typeof sections[0]>()
+  for (const section of sections) {
+    const domain = section.source_sites?.normalized_domain || ''
+    const sig = section.layout_signature || ''
+    const family = section.block_family || ''
+    const key = `${domain}::${family}::${sig}`
+    const existing = dedupMap.get(key)
+    if (!existing || (section.classifier_confidence || 0) > (existing.classifier_confidence || 0)) {
+      dedupMap.set(key, section)
+    }
+  }
+  sections = Array.from(dedupMap.values())
+
+  // Re-sort after dedup
+  sections.sort((a, b) => {
+    switch (sortKey) {
+      case 'confidence':
+        return (b.classifier_confidence || 0) - (a.classifier_confidence || 0)
+      case 'family':
+        return String(a.block_family || '').localeCompare(String(b.block_family || ''))
+      case 'source':
+        return String(a.source_sites?.normalized_domain || '').localeCompare(String(b.source_sites?.normalized_domain || ''))
       case 'newest':
       default:
         return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()

@@ -401,6 +401,35 @@ async function getLibraryResults(filters: {
     }
   })
 
+  // Deduplicate: same site + same family + similar layout = keep only the best one
+  const dedupMap = new Map<string, any>()
+  for (const section of results) {
+    const domain = section.source_sites?.normalized_domain || ''
+    const sig = section.layout_signature || ''
+    const family = section.block_family || ''
+    const key = `${domain}::${family}::${sig}`
+    const existing = dedupMap.get(key)
+    if (!existing || (section.classifier_confidence || 0) > (existing.classifier_confidence || 0)) {
+      dedupMap.set(key, section)
+    }
+  }
+  results = Array.from(dedupMap.values())
+
+  // Re-sort after dedup
+  results.sort((a: any, b: any) => {
+    switch (filters.sort) {
+      case 'confidence':
+        return (b.classifier_confidence || 0) - (a.classifier_confidence || 0)
+      case 'family':
+        return String(a.block_family || '').localeCompare(String(b.block_family || ''))
+      case 'source':
+        return String(a.source_sites?.normalized_domain || '').localeCompare(String(b.source_sites?.normalized_domain || ''))
+      case 'newest':
+      default:
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    }
+  })
+
   return results.slice(0, filters.limit)
 }
 

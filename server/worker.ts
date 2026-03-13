@@ -29,9 +29,40 @@ import { downloadSite } from './site-downloader.js'
 import { detectSections, screenshotSection } from './section-detector.js'
 import { extractStyleSummary, generateLayoutSignature } from './style-extractor.js'
 import { classifySection, type RawSection } from './classifier.js'
+import { classifySectionsWithAI } from './ai-classifier.js'
 import { canonicalizeSection } from './canonicalizer.js'
 import { parseSectionDOM } from './dom-parser.js'
 import { logger } from './logger.js'
+
+/**
+ * Simplify HTML for AI classification: strip inline styles, long attributes,
+ * and deeply nested content while preserving the structural skeleton.
+ */
+function simplifyHTML(html: string, maxLen: number): string {
+  let simplified = html
+    // Remove inline styles (huge noise)
+    .replace(/\s+style="[^"]*"/gi, '')
+    // Remove data-* attributes
+    .replace(/\s+data-[a-z-]+="[^"]*"/gi, '')
+    // Remove srcset (long image lists)
+    .replace(/\s+srcset="[^"]*"/gi, '')
+    // Shorten src/href to just the filename
+    .replace(/\s+(src|href)="([^"]{80,})"/gi, (_, attr, val) => {
+      const short = val.split('/').pop()?.slice(0, 40) || val.slice(0, 40)
+      return ` ${attr}="${short}..."`
+    })
+    // Collapse whitespace
+    .replace(/\s{2,}/g, ' ')
+    // Remove SVG contents (keep the tag)
+    .replace(/<svg[^>]*>[\s\S]*?<\/svg>/gi, '<svg/>')
+
+  if (simplified.length <= maxLen) return simplified
+
+  // If still too long, take first half + last quarter for structural overview
+  const firstPart = simplified.slice(0, Math.floor(maxLen * 0.7))
+  const lastPart = simplified.slice(-Math.floor(maxLen * 0.25))
+  return `${firstPart}\n... (truncated) ...\n${lastPart}`
+}
 
 const WORKER_ID = `worker-${process.pid}`
 const POLL_INTERVAL = 3000
@@ -373,75 +404,80 @@ async function processJob(job: any) {
     }
     const sortedEntries = [...urlMap.entries()].sort((a, b) => b[0].length - a[0].length)
 
-    // ========== Phase 4: Classify + Store each section ==========
+    // ========== Phase 4: Pre-filter + AI Classify + Store ==========
     let sectionCount = 0
+    const SKIP_FAMILIES = new Set(['navigation', 'footer'])
+    const MIN_TEXT_LENGTH = 30
+    const MIN_SECTION_HEIGHT = 60
+    const MAX_SECTION_HTML_SIZE = 500_000
 
-    for (const section of sections) {
-      logger.debug('Processing section', { jobId: job.id, sectionIndex: section.index, total: sections.length, tagName: section.tagName, height: Math.round(section.boundingBox.height) })
-
-      // Classify
-      const rawForClassifier: RawSection = {
-        tagName: section.tagName,
-        outerHTML: section.outerHTML,
-        textContent: section.textContent,
-        boundingBox: section.boundingBox,
-        computedStyles: section.computedStyles,
-        hasImages: section.features.imageCount > 0,
-        hasCTA: section.features.buttonCount > 0,
-        hasForm: section.features.formCount > 0,
-        headingCount: section.features.headingCount,
-        linkCount: section.features.linkCount,
-        cardCount: section.features.cardCount,
-        childCount: section.features.childCount,
-        classNames: section.classTokens.join(' '),
+    // Pre-filter: remove obvious nav/footer and low-quality via heuristics
+    const candidates = sections.filter(section => {
+      const raw: RawSection = {
+        tagName: section.tagName, outerHTML: section.outerHTML, textContent: section.textContent,
+        boundingBox: section.boundingBox, computedStyles: section.computedStyles,
+        hasImages: section.features.imageCount > 0, hasCTA: section.features.buttonCount > 0,
+        hasForm: section.features.formCount > 0, headingCount: section.features.headingCount,
+        linkCount: section.features.linkCount, cardCount: section.features.cardCount,
+        childCount: section.features.childCount, classNames: section.classTokens.join(' '),
         id: section.idTokens[0] || ''
       }
-      const classification = classifySection(rawForClassifier, section.index, sections.length)
-
-      // Skip nav/footer — these are always site-specific and not reusable
-      const SKIP_FAMILIES = new Set(['navigation', 'footer'])
-      if (SKIP_FAMILIES.has(classification.type)) {
-        logger.debug('Section skipped (nav/footer)', {
-          jobId: job.id, sectionIndex: section.index, family: classification.type
-        })
-        continue
+      const heuristic = classifySection(raw, section.index, sections.length)
+      if (SKIP_FAMILIES.has(heuristic.type)) {
+        logger.debug('Section skipped (nav/footer)', { jobId: job.id, sectionIndex: section.index })
+        return false
       }
-
-      // Quality filter: skip low-quality sections
-      const MIN_TEXT_LENGTH = 30
-      const MIN_SECTION_HEIGHT = 60
       const isLowQuality = (
         section.textContent.trim().length < MIN_TEXT_LENGTH &&
-        section.features.imageCount === 0 &&
-        section.features.formCount === 0
+        section.features.imageCount === 0 && section.features.formCount === 0
       ) || section.boundingBox.height < MIN_SECTION_HEIGHT
+      if (isLowQuality && heuristic.confidence < 0.7) {
+        logger.debug('Section skipped (low quality)', { jobId: job.id, sectionIndex: section.index })
+        return false
+      }
+      if (section.outerHTML.length > MAX_SECTION_HTML_SIZE) {
+        logger.warn('Section skipped (DOM too large)', { jobId: job.id, sectionIndex: section.index })
+        return false
+      }
+      return true
+    })
 
-      if (isLowQuality && classification.confidence < 0.7) {
-        logger.debug('Section skipped (low quality)', {
-          jobId: job.id, sectionIndex: section.index,
-          textLen: section.textContent.trim().length,
-          height: section.boundingBox.height,
-          confidence: classification.confidence
+    // AI Classification (batch)
+    logger.info('AI classifying sections', { jobId: job.id, count: candidates.length })
+    const aiResults = await classifySectionsWithAI(
+      candidates.map(s => ({
+        index: s.index,
+        textContent: s.textContent,
+        features: s.features,
+        classTokens: s.classTokens,
+        tagName: s.tagName,
+        boundingBox: s.boundingBox,
+        outerHTMLSnippet: s.outerHTML.slice(0, 8000)
+      }))
+    )
+
+    for (let i = 0; i < candidates.length; i++) {
+      const section = candidates[i]
+      const aiClass = aiResults[i]
+
+      logger.debug('Processing section', {
+        jobId: job.id, sectionIndex: section.index,
+        aiType: aiClass.type, aiConfidence: aiClass.confidence, aiQuality: aiClass.quality_score
+      })
+
+      // Skip if AI says low quality
+      if (aiClass.quality_score < 0.25) {
+        logger.debug('Section skipped (AI low quality)', {
+          jobId: job.id, sectionIndex: section.index, quality: aiClass.quality_score, reason: aiClass.reason
         })
         continue
       }
 
-      // Skip sections with excessively large DOM (prevents hangs)
-      const MAX_SECTION_HTML_SIZE = 500_000 // 500KB
-      if (section.outerHTML.length > MAX_SECTION_HTML_SIZE) {
-        logger.warn('Section skipped (DOM too large)', { jobId: job.id, sectionIndex: section.index, htmlSize: section.outerHTML.length })
-        continue
-      }
+      // Skip nav/footer even if AI reclassified
+      if (SKIP_FAMILIES.has(aiClass.type)) continue
 
-      // Reusability score
-      const reusabilityScore = Math.min(1, (
-        classification.confidence * 0.4 +
-        (section.textContent.trim().length > 50 ? 0.15 : 0) +
-        (section.features.headingCount > 0 ? 0.15 : 0) +
-        (section.features.imageCount > 0 ? 0.1 : 0) +
-        (section.features.buttonCount > 0 ? 0.1 : 0) +
-        (section.boundingBox.height > 200 ? 0.1 : 0)
-      ))
+      const classification = { type: aiClass.type, confidence: aiClass.confidence }
+      const reusabilityScore = aiClass.quality_score
 
       const canonical = canonicalizeSection(section, classification.type)
       const finalPageUrl = page.url()
@@ -484,8 +520,8 @@ async function processJob(job: any) {
         sanitized_html_storage_path: previewPath,
         thumbnail_storage_path: thumbnailPath,
         block_family: classification.type,
-        block_variant: canonical?.variant,
-        classifier_type: 'heuristic',
+        block_variant: aiClass.variant || canonical?.variant,
+        classifier_type: process.env.ANTHROPIC_API_KEY ? 'ai' : 'heuristic',
         classifier_confidence: classification.confidence,
         features_jsonb: section.features,
         text_summary: section.textContent.slice(0, 500),
