@@ -134,15 +134,26 @@ async function claimJob(): Promise<any | null> {
     return claimQueuedJob(WORKER_ID)
   }
 
-  const { data, error } = await supabaseAdmin
+  // Step 1: Find the oldest queued job
+  const { data: candidates } = await supabaseAdmin
     .from('crawl_runs')
-    .update({ status: 'claimed', worker_id: WORKER_ID, started_at: new Date().toISOString() })
+    .select('id')
     .eq('status', 'queued')
     .or(`run_after.is.null,run_after.lte.${new Date().toISOString()}`)
     .order('queued_at', { ascending: true })
     .limit(1)
+
+  if (!candidates || candidates.length === 0) return null
+
+  // Step 2: Claim it by updating status
+  const { data, error } = await supabaseAdmin
+    .from('crawl_runs')
+    .update({ status: 'claimed', worker_id: WORKER_ID, started_at: new Date().toISOString() })
+    .eq('id', candidates[0].id)
+    .eq('status', 'queued') // optimistic lock
     .select('*, source_sites(*)')
     .single()
+
   if (error || !data) return null
   return data
 }
@@ -541,7 +552,84 @@ async function processJob(job: any) {
 
 async function runCleanup() {
   if (HAS_SUPABASE) {
-    // TODO: Implement Supabase cleanup via RPC or scheduled SQL function
+    try {
+      const cutoff = new Date(Date.now() - DATA_RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString()
+
+      // Find old crawl_runs
+      const { data: oldRuns } = await supabaseAdmin
+        .from('crawl_runs')
+        .select('id, site_id')
+        .lt('queued_at', cutoff)
+
+      if (!oldRuns || oldRuns.length === 0) {
+        logger.debug('Supabase cleanup: nothing to remove', { retentionDays: DATA_RETENTION_DAYS })
+        return
+      }
+
+      const oldRunIds = oldRuns.map((r: any) => r.id)
+
+      // Find pages for old runs
+      const { data: oldPages } = await supabaseAdmin
+        .from('source_pages')
+        .select('id, final_html_path, screenshot_storage_path, css_bundle_path')
+        .in('crawl_run_id', oldRunIds)
+
+      const oldPageIds = (oldPages || []).map((p: any) => p.id)
+
+      // Find sections for old pages
+      const { data: oldSections } = oldPageIds.length > 0
+        ? await supabaseAdmin
+            .from('source_sections')
+            .select('id, raw_html_storage_path, sanitized_html_storage_path, thumbnail_storage_path')
+            .in('page_id', oldPageIds)
+        : { data: [] }
+
+      // Delete storage files (best-effort)
+      const storagePaths: Array<{ bucket: string; paths: string[] }> = []
+      const rawPaths: string[] = []
+      const screenshotPaths: string[] = []
+      const thumbnailPaths: string[] = []
+      const sanitizedPaths: string[] = []
+
+      for (const page of oldPages || []) {
+        if (page.final_html_path) rawPaths.push(page.final_html_path)
+        if (page.screenshot_storage_path) screenshotPaths.push(page.screenshot_storage_path)
+        if (page.css_bundle_path) rawPaths.push(page.css_bundle_path)
+      }
+      for (const section of oldSections || []) {
+        if (section.raw_html_storage_path) rawPaths.push(section.raw_html_storage_path)
+        if (section.sanitized_html_storage_path) sanitizedPaths.push(section.sanitized_html_storage_path)
+        if (section.thumbnail_storage_path) thumbnailPaths.push(section.thumbnail_storage_path)
+      }
+
+      // Batch delete storage files (Supabase supports batch remove)
+      if (rawPaths.length > 0) {
+        await supabaseAdmin.storage.from(STORAGE_BUCKETS.RAW_HTML).remove(rawPaths).catch(() => {})
+      }
+      if (screenshotPaths.length > 0) {
+        await supabaseAdmin.storage.from(STORAGE_BUCKETS.PAGE_SCREENSHOTS).remove(screenshotPaths).catch(() => {})
+      }
+      if (thumbnailPaths.length > 0) {
+        await supabaseAdmin.storage.from(STORAGE_BUCKETS.SECTION_THUMBNAILS).remove(thumbnailPaths).catch(() => {})
+      }
+      if (sanitizedPaths.length > 0) {
+        await supabaseAdmin.storage.from(STORAGE_BUCKETS.SANITIZED_HTML).remove(sanitizedPaths).catch(() => {})
+      }
+
+      // Delete DB records (CASCADE handles related records)
+      for (const runId of oldRunIds) {
+        await supabaseAdmin.from('crawl_runs').delete().eq('id', runId)
+      }
+
+      logger.info('Supabase cleanup completed', {
+        retentionDays: DATA_RETENTION_DAYS,
+        deletedCrawlRuns: oldRunIds.length,
+        deletedPages: oldPageIds.length,
+        deletedSections: (oldSections || []).length
+      })
+    } catch (err: any) {
+      logger.error('Supabase cleanup failed', { error: err.message })
+    }
     return
   }
 

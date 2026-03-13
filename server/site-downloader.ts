@@ -272,12 +272,22 @@ export async function downloadSite(
   const urlMap = new Map<string, string>() // originalUrl → signedUrl
 
   // Step 3: CSS直接ダウンロード
+  // collectCSSChunks で既に取得済みのURLをスキップ用に収集
+  const collectedCssUrls = new Set(cssChunks.map(c => c.sourceUrl))
   const cssFiles: DownloadedAsset[] = []
 
   for (let i = 0; i < cssUrls.length; i++) {
     const cssUrl = cssUrls[i]
     const file = await downloadFile(cssUrl)
     if (!file) { console.log(`  CSS skip (failed): ${cssUrl.slice(0, 80)}`); continue }
+
+    // collectCSSChunks で取得できなかったCSS（cross-origin等）をバンドルに追加
+    if (!collectedCssUrls.has(cssUrl)) {
+      const cssText = file.data.toString('utf-8')
+      if (cssText.trim()) {
+        allCssContent += `\n\n/* downloaded: ${cssUrl} */\n${resolveCSSUrls(cssText, cssUrl)}`
+      }
+    }
 
     const storagePath = urlToStoragePath(`${baseDir}/css`, cssUrl, i)
     try {

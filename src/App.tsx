@@ -5,10 +5,11 @@ import { PartsPanel } from './components/PartsPanel'
 import { Canvas } from './components/Canvas'
 import { Preview } from './components/Preview'
 import { Library } from './components/Library'
+import { ProjectManager } from './components/ProjectManager'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import './styles.css'
 
-type View = 'editor' | 'preview' | 'library'
+type View = 'editor' | 'preview' | 'library' | 'projects'
 
 const CANVAS_STORAGE_KEY = 'partcopy:canvas'
 const CANVAS_STORAGE_VERSION = 1
@@ -214,6 +215,9 @@ export default function App() {
           <button className={`view-btn ${view === 'preview' ? 'active' : ''}`} onClick={() => setView('preview')}>
             Preview
           </button>
+          <button className={`view-btn ${view === 'projects' ? 'active' : ''}`} onClick={() => setView('projects')}>
+            Projects
+          </button>
         </div>
       </header>
 
@@ -250,6 +254,15 @@ export default function App() {
       {view === 'preview' && <Preview items={canvasItems} />}
 
       {view === 'library' && <Library onAddToCanvas={addSavedToCanvas} />}
+
+      {view === 'projects' && (
+        <ProjectManager
+          canvas={canvas}
+          setCanvas={setCanvas}
+          setSections={setSections}
+          onSwitchToEditor={() => setView('editor')}
+        />
+      )}
       </ErrorBoundary>
     </div>
   )

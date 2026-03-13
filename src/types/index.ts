@@ -95,3 +95,29 @@ export interface GenreInfo {
   genre: string
   count: number
 }
+
+// ============================================================
+// Project
+// ============================================================
+export interface Project {
+  id: string
+  name: string
+  created_at: string
+  updated_at: string
+  page_count?: number
+  block_count?: number
+}
+
+// ============================================================
+// AI Optimize
+// ============================================================
+export interface OptimizeConfig {
+  brandColor: string
+  industry: string
+  targetAudience: string
+}
+
+export interface OptimizeResult {
+  html: string
+  cssLength: number
+}

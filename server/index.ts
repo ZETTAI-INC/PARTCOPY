@@ -8,7 +8,9 @@ import {
   addPatches,
   createCrawlRun,
   createPatchSet,
+  createProject,
   createProjectPageBlock,
+  deleteProject,
   deleteSection as deleteLocalSection,
   getBlockInstance,
   getDefaultBlockVariant,
@@ -20,13 +22,19 @@ import {
   getPageById,
   getPatchSet,
   getPatches,
+  getProject,
   getSection,
   getSectionNodes,
   getSectionsByPage,
   getStoredFileResponse,
   listBlockVariants,
   listLibrarySections,
+  listProjectPages,
+  listProjects,
+  loadCanvasFromProject,
   readStoredText,
+  saveCanvasToProject,
+  updateProject,
   upsertSourceSite
 } from './local-store.js'
 import { HAS_SUPABASE, supabaseAdmin } from './supabase.js'
@@ -178,7 +186,11 @@ async function readBucketText(bucket: string, storagePath?: string | null) {
     }
   }
 
-  const { data: file } = await supabaseAdmin.storage.from(bucket).download(storagePath)
+  const { data: file, error } = await supabaseAdmin.storage.from(bucket).download(storagePath)
+  if (error) {
+    logger.error('readBucketText failed', { bucket, storagePath, error: error.message })
+    return ''
+  }
   if (!file) return ''
   return file.text()
 }
@@ -640,14 +652,40 @@ async function getDefaultVariantRecord() {
 // Clean asset serving: /assets/{siteId}/{jobId}/...
 // ============================================================
 app.get('/assets/:siteId/:jobId/*', async (req, res) => {
-  if (HAS_SUPABASE) {
-    res.status(404).send('Not found in local mode')
-    return
-  }
-
   const { siteId, jobId } = req.params
   const rest = (req.params as any)[0] as string // e.g. "img/5-1-1.png" or "bundle.css"
   const storagePath = `${siteId}/${jobId}/${rest}`
+
+  if (HAS_SUPABASE) {
+    // Supabase mode: download from storage and serve
+    try {
+      const { data: file, error } = await supabaseAdmin.storage
+        .from(STORAGE_BUCKETS.RAW_HTML)
+        .download(storagePath)
+      if (error || !file) {
+        res.status(404).send('File not found')
+        return
+      }
+      const buf = Buffer.from(await file.arrayBuffer())
+      // Determine content type from extension
+      const ext = rest.split('.').pop()?.toLowerCase() || ''
+      const mimeTypes: Record<string, string> = {
+        css: 'text/css', html: 'text/html', js: 'application/javascript',
+        json: 'application/json', png: 'image/png', jpg: 'image/jpeg',
+        jpeg: 'image/jpeg', gif: 'image/gif', svg: 'image/svg+xml',
+        webp: 'image/webp', avif: 'image/avif', ico: 'image/x-icon',
+        woff: 'font/woff', woff2: 'font/woff2', ttf: 'font/ttf',
+        eot: 'application/vnd.ms-fontobject', otf: 'font/otf',
+        txt: 'text/plain'
+      }
+      res.setHeader('Content-Type', mimeTypes[ext] || 'application/octet-stream')
+      res.setHeader('Cache-Control', 'public, max-age=86400')
+      res.send(buf)
+    } catch {
+      res.status(404).send('File not found')
+    }
+    return
+  }
 
   try {
     const { buffer, contentType } = await getStoredFileResponse(STORAGE_BUCKETS.RAW_HTML, storagePath)
@@ -1250,6 +1288,447 @@ app.post('/api/projects/:projectId/page-blocks', async (req, res) => {
     const block = await createProjectPageBlockRecord(record)
     res.json({ block })
   } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ============================================================
+// Project Management API
+// ============================================================
+app.post('/api/projects', async (req, res) => {
+  const { name } = req.body
+  if (!name || typeof name !== 'string' || name.trim().length === 0) {
+    res.status(400).json({ error: 'name is required' })
+    return
+  }
+  try {
+    if (!HAS_SUPABASE) {
+      const project = await createProject({ name: name.trim() })
+      res.json({ project })
+      return
+    }
+    const { data, error } = await supabaseAdmin
+      .from('projects')
+      .insert({ name: name.trim(), updated_at: new Date().toISOString() })
+      .select()
+      .single()
+    if (error) throw new Error(error.message)
+    // Create default page
+    await supabaseAdmin
+      .from('project_pages')
+      .insert({ project_id: data.id, label: 'Page 1', order_index: 0, slug: 'page-1', sort_order: 0 })
+    res.json({ project: data })
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.get('/api/projects', async (_req, res) => {
+  try {
+    if (!HAS_SUPABASE) {
+      const projects = await listProjects()
+      res.json({ projects })
+      return
+    }
+    const { data, error } = await supabaseAdmin
+      .from('projects')
+      .select('*')
+      .order('updated_at', { ascending: false })
+    if (error) throw new Error(error.message)
+    res.json({ projects: data || [] })
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.get('/api/projects/:id', async (req, res) => {
+  try {
+    if (!HAS_SUPABASE) {
+      const project = await getProject(req.params.id)
+      if (!project) { res.status(404).json({ error: 'Project not found' }); return }
+      const pages = await listProjectPages(req.params.id)
+      res.json({ project, pages })
+      return
+    }
+    const { data: project, error } = await supabaseAdmin
+      .from('projects')
+      .select('*')
+      .eq('id', req.params.id)
+      .single()
+    if (error || !project) { res.status(404).json({ error: 'Project not found' }); return }
+    const { data: pages } = await supabaseAdmin
+      .from('project_pages')
+      .select('*')
+      .eq('project_id', req.params.id)
+      .order('sort_order')
+    res.json({ project, pages: pages || [] })
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.put('/api/projects/:id', async (req, res) => {
+  const { name } = req.body
+  try {
+    if (!HAS_SUPABASE) {
+      const project = await updateProject(req.params.id, { name })
+      if (!project) { res.status(404).json({ error: 'Project not found' }); return }
+      res.json({ project })
+      return
+    }
+    const patch: Record<string, any> = { updated_at: new Date().toISOString() }
+    if (name !== undefined) patch.name = name
+    const { data, error } = await supabaseAdmin
+      .from('projects')
+      .update(patch)
+      .eq('id', req.params.id)
+      .select()
+      .single()
+    if (error) throw new Error(error.message)
+    res.json({ project: data })
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.delete('/api/projects/:id', async (req, res) => {
+  try {
+    if (!HAS_SUPABASE) {
+      await deleteProject(req.params.id)
+      res.json({ ok: true })
+      return
+    }
+    // CASCADE: delete pages and blocks first
+    const { data: pages } = await supabaseAdmin
+      .from('project_pages')
+      .select('id')
+      .eq('project_id', req.params.id)
+    const pageIds = (pages || []).map((p: any) => p.id)
+    if (pageIds.length > 0) {
+      await supabaseAdmin.from('project_page_blocks').delete().in('project_page_id', pageIds)
+    }
+    await supabaseAdmin.from('project_pages').delete().eq('project_id', req.params.id)
+    await supabaseAdmin.from('projects').delete().eq('id', req.params.id)
+    res.json({ ok: true })
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ============================================================
+// Canvas Save / Load
+// ============================================================
+app.post('/api/projects/:id/save-canvas', async (req, res) => {
+  const { blocks } = req.body
+  if (!Array.isArray(blocks)) {
+    res.status(400).json({ error: 'blocks array is required' })
+    return
+  }
+  try {
+    if (!HAS_SUPABASE) {
+      const result = await saveCanvasToProject(req.params.id, blocks)
+      if (!result) { res.status(404).json({ error: 'Project not found' }); return }
+      res.json({ ok: true })
+      return
+    }
+    // Supabase: get or create default page
+    let { data: pages } = await supabaseAdmin
+      .from('project_pages')
+      .select('id')
+      .eq('project_id', req.params.id)
+      .order('sort_order')
+      .limit(1)
+    let pageId: string
+    if (pages && pages.length > 0) {
+      pageId = pages[0].id
+    } else {
+      const { data: newPage, error } = await supabaseAdmin
+        .from('project_pages')
+        .insert({ project_id: req.params.id, label: 'Page 1', order_index: 0, slug: 'page-1', sort_order: 0 })
+        .select('id')
+        .single()
+      if (error || !newPage) throw new Error('Failed to create page')
+      pageId = newPage.id
+    }
+    // Clear existing blocks
+    await supabaseAdmin.from('project_page_blocks').delete().eq('project_page_id', pageId)
+    // Insert new blocks
+    if (blocks.length > 0) {
+      const records = blocks.map((b: any) => ({
+        project_page_id: pageId,
+        source_section_id: b.sectionId,
+        position: b.position,
+        render_mode: 'source_patch'
+      }))
+      await supabaseAdmin.from('project_page_blocks').insert(records)
+    }
+    await supabaseAdmin.from('projects').update({ updated_at: new Date().toISOString() }).eq('id', req.params.id)
+    res.json({ ok: true })
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.get('/api/projects/:id/load-canvas', async (req, res) => {
+  try {
+    if (!HAS_SUPABASE) {
+      const result = await loadCanvasFromProject(req.params.id)
+      if (!result) { res.status(404).json({ error: 'Project not found' }); return }
+      res.json(result)
+      return
+    }
+    const { data: pages } = await supabaseAdmin
+      .from('project_pages')
+      .select('id')
+      .eq('project_id', req.params.id)
+      .order('sort_order')
+    const pageIds = (pages || []).map((p: any) => p.id)
+    if (pageIds.length === 0) {
+      res.json({ blocks: [], sections: [] })
+      return
+    }
+    const { data: blocks } = await supabaseAdmin
+      .from('project_page_blocks')
+      .select('*')
+      .in('project_page_id', pageIds)
+      .order('position')
+    const sectionIds = [...new Set((blocks || []).map((b: any) => b.source_section_id).filter(Boolean))]
+    let sections: any[] = []
+    if (sectionIds.length > 0) {
+      const { data } = await supabaseAdmin
+        .from('source_sections')
+        .select('*, source_sites(normalized_domain, genre, tags), source_pages(url, title)')
+        .in('id', sectionIds)
+      sections = (data || []).map((s: any) => ({
+        ...s,
+        htmlUrl: (s.sanitized_html_storage_path || s.raw_html_storage_path) ? `/api/sections/${s.id}/render` : null
+      }))
+    }
+    res.json({ blocks: blocks || [], sections })
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ============================================================
+// AI Optimize
+// ============================================================
+import { optimizeWithClaude } from './ai-optimizer.js'
+
+app.post('/api/canvas/optimize', async (req, res) => {
+  const { sectionIds, config } = req.body
+  if (!Array.isArray(sectionIds) || sectionIds.length === 0) {
+    res.status(400).json({ error: 'sectionIds array is required' })
+    return
+  }
+  if (sectionIds.length > 10) {
+    res.status(400).json({ error: 'Maximum 10 sections allowed' })
+    return
+  }
+  if (!process.env.ANTHROPIC_API_KEY) {
+    res.status(500).json({ error: 'ANTHROPIC_API_KEY is not configured' })
+    return
+  }
+
+  const serverOrigin = `http://${req.headers.host || `127.0.0.1:${PORT}`}`
+
+  try {
+    const sectionsData: Array<{ id: string; family: string; html: string; sourceUrl?: string }> = []
+    let combinedOriginalCss = ''
+    const cssBundlePaths = new Set<string>()
+
+    for (const sectionId of sectionIds) {
+      const record = await getRenderContext(sectionId)
+      if (!record?.section) continue
+
+      const pageOrigin = record.page.url ? new URL(record.page.url).origin : ''
+
+      let html = await readBucketText(STORAGE_BUCKETS.RAW_HTML, record.section.raw_html_storage_path)
+      if (!html) {
+        html = await readBucketText(STORAGE_BUCKETS.SANITIZED_HTML, record.section.sanitized_html_storage_path)
+      }
+      if (!html) continue
+
+      // Resolve relative URLs
+      html = resolveRelativeUrls(html, pageOrigin)
+      html = html.replace(/(["'(])\/assets\//g, `$1${serverOrigin}/assets/`)
+
+      // Collect CSS bundle
+      if (record.page.css_bundle_path && !cssBundlePaths.has(record.page.css_bundle_path)) {
+        cssBundlePaths.add(record.page.css_bundle_path)
+        let css = await readBucketText(STORAGE_BUCKETS.RAW_HTML, record.page.css_bundle_path)
+        if (!css && HAS_SUPABASE) {
+          const bundleDir = record.page.css_bundle_path.replace(/\/[^/]+$/, '')
+          const cssDir = `${bundleDir}/css`
+          const { data: cssFiles } = await supabaseAdmin.storage.from(STORAGE_BUCKETS.RAW_HTML).list(cssDir)
+          if (cssFiles && cssFiles.length > 0) {
+            const cssTexts: string[] = []
+            for (const f of cssFiles) {
+              if (!f.name.endsWith('.css') && !f.name.endsWith('.txt')) continue
+              const text = await readBucketText(STORAGE_BUCKETS.RAW_HTML, `${cssDir}/${f.name}`)
+              if (text) cssTexts.push(text)
+            }
+            css = cssTexts.join('\n')
+          }
+        }
+        if (css) {
+          css = css.replace(/url\(\s*(['"]?)\/assets\//g, `url($1${serverOrigin}/assets/`)
+          combinedOriginalCss += css + '\n'
+        }
+      }
+
+      // Get block family
+      let family = 'unknown'
+      if (HAS_SUPABASE) {
+        const { data: sec } = await supabaseAdmin
+          .from('source_sections')
+          .select('block_family')
+          .eq('id', sectionId)
+          .single()
+        if (sec) family = sec.block_family || 'unknown'
+      } else {
+        const sec = await getSection(sectionId)
+        if (sec) family = sec.block_family || 'unknown'
+      }
+
+      sectionsData.push({ id: sectionId, family, html, sourceUrl: record.page.url })
+    }
+
+    if (sectionsData.length === 0) {
+      res.status(404).json({ error: 'No sections found' })
+      return
+    }
+
+    // Call Claude for CSS harmony layer
+    const aiResult = await optimizeWithClaude(sectionsData, config || {
+      brandColor: '#2563eb',
+      industry: 'SaaS',
+      targetAudience: 'ビジネスパーソン'
+    })
+
+    // Build complete HTML: original CSS + AI overlay + wrapped sections
+    const wrappedSections = sectionsData.map((s, i) =>
+      `<div class="pc-s${i}" data-family="${s.family}">\n${s.html}\n</div>`
+    ).join('\n')
+
+    const fullHtml = `<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PARTCOPY Optimized</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700;900&display=swap" rel="stylesheet">
+<style>
+/* === Original Site CSS === */
+${combinedOriginalCss}
+/* === AI Harmony Layer === */
+${aiResult.css}
+</style>
+</head>
+<body class="pc-optimized">
+${wrappedSections}
+</body>
+</html>`
+
+    res.json({ html: fullHtml, cssLength: aiResult.css.length })
+  } catch (err: any) {
+    logger.error('Optimize failed', { error: err.message })
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ============================================================
+// HTML Export
+// ============================================================
+app.post('/api/canvas/export-html', async (req, res) => {
+  const { sectionIds } = req.body
+  if (!Array.isArray(sectionIds) || sectionIds.length === 0) {
+    res.status(400).json({ error: 'sectionIds array is required' })
+    return
+  }
+
+  // Determine server origin for resolving /assets/ paths
+  const serverOrigin = `http://${req.headers.host || `127.0.0.1:${PORT}`}`
+
+  try {
+    // Collect HTML and CSS for each section
+    const htmlParts: string[] = []
+    let combinedCss = ''
+    const cssBundlePaths = new Set<string>()
+
+    for (const sectionId of sectionIds) {
+      const record = await getRenderContext(sectionId)
+      if (!record?.section) continue
+
+      const pageOrigin = record.page.url ? new URL(record.page.url).origin : ''
+
+      let storedHtml = await readBucketText(STORAGE_BUCKETS.RAW_HTML, record.section.raw_html_storage_path)
+      if (!storedHtml) {
+        storedHtml = await readBucketText(STORAGE_BUCKETS.SANITIZED_HTML, record.section.sanitized_html_storage_path)
+      }
+      if (!storedHtml) continue
+
+      storedHtml = resolveRelativeUrls(storedHtml, pageOrigin)
+      // Resolve /assets/ paths to absolute server URLs
+      storedHtml = storedHtml.replace(/(["'(])\/assets\//g, `$1${serverOrigin}/assets/`)
+      htmlParts.push(storedHtml)
+
+      // Collect CSS bundle (deduplicated)
+      if (record.page.css_bundle_path && !cssBundlePaths.has(record.page.css_bundle_path)) {
+        cssBundlePaths.add(record.page.css_bundle_path)
+        let css = await readBucketText(STORAGE_BUCKETS.RAW_HTML, record.page.css_bundle_path)
+
+        // Fallback: bundle.css が空の場合、個別CSSファイルから収集
+        if (!css && HAS_SUPABASE) {
+          const bundleDir = record.page.css_bundle_path.replace(/\/[^/]+$/, '')
+          const cssDir = `${bundleDir}/css`
+          const { data: cssFiles } = await supabaseAdmin.storage.from(STORAGE_BUCKETS.RAW_HTML).list(cssDir)
+          if (cssFiles && cssFiles.length > 0) {
+            const cssTexts: string[] = []
+            for (const f of cssFiles) {
+              if (!f.name.endsWith('.css') && !f.name.endsWith('.txt')) continue
+              const text = await readBucketText(STORAGE_BUCKETS.RAW_HTML, `${cssDir}/${f.name}`)
+              if (text) cssTexts.push(`/* ${f.name} */\n${text}`)
+            }
+            css = cssTexts.join('\n\n')
+            logger.info('CSS fallback from individual files', { count: cssTexts.length, totalLength: css.length })
+          }
+        }
+
+        if (css) {
+          // Resolve /assets/ in CSS url() too
+          css = css.replace(/url\(\s*(['"]?)\/assets\//g, `url($1${serverOrigin}/assets/`)
+          combinedCss += css + '\n'
+        }
+      }
+    }
+
+    if (htmlParts.length === 0) {
+      res.status(404).json({ error: 'No sections found' })
+      return
+    }
+
+    const exportHtml = `<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PARTCOPY Export</title>
+<style>
+${combinedCss}
+</style>
+</head>
+<body>
+${htmlParts.join('\n')}
+</body>
+</html>`
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8')
+    res.setHeader('Content-Disposition', 'attachment; filename="partcopy-export.html"')
+    res.send(exportHtml)
+  } catch (err: any) {
+    logger.error('Export failed', { error: err.message })
     res.status(500).json({ error: err.message })
   }
 })

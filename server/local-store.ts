@@ -127,6 +127,32 @@ interface SectionPatchRow extends JsonObject {
   created_at: string
 }
 
+interface ProjectRow extends JsonObject {
+  id: string
+  name: string
+  created_at: string
+  updated_at: string
+}
+
+interface ProjectPageRow extends JsonObject {
+  id: string
+  project_id: string
+  label: string
+  order_index: number
+  created_at: string
+}
+
+interface ExportRow extends JsonObject {
+  id: string
+  project_id?: string | null
+  format: string
+  status: string
+  html_storage_path?: string | null
+  error_message?: string | null
+  created_at: string
+  updated_at: string
+}
+
 interface ProjectPageBlockRow extends JsonObject {
   id: string
   created_at: string
@@ -146,6 +172,9 @@ interface LocalDB {
   section_patch_sets: SectionPatchSetRow[]
   section_patches: SectionPatchRow[]
   project_page_blocks: ProjectPageBlockRow[]
+  projects: ProjectRow[]
+  project_pages: ProjectPageRow[]
+  exports: ExportRow[]
 }
 
 const FAMILY_SEEDS = [
@@ -229,7 +258,10 @@ function createDefaultDb(): LocalDB {
     section_nodes: [],
     section_patch_sets: [],
     section_patches: [],
-    project_page_blocks: []
+    project_page_blocks: [],
+    projects: [],
+    project_pages: [],
+    exports: []
   }
 }
 
@@ -945,6 +977,210 @@ export async function createProjectPageBlock(record: JsonObject) {
       ...record
     }
     db.project_page_blocks.push(row)
+    return clone(row)
+  })
+}
+
+// ============================================================
+// Project CRUD
+// ============================================================
+
+export async function createProject(input: { name: string }) {
+  return withWriteLock(async db => {
+    const row: ProjectRow = {
+      id: randomUUID(),
+      name: input.name,
+      created_at: now(),
+      updated_at: now()
+    }
+    db.projects.push(row)
+    // Create a default page
+    const page: ProjectPageRow = {
+      id: randomUUID(),
+      project_id: row.id,
+      label: 'Page 1',
+      order_index: 0,
+      created_at: now()
+    }
+    db.project_pages.push(page)
+    return clone(row)
+  })
+}
+
+export async function listProjects() {
+  const db = await readDb()
+  return clone(
+    [...db.projects]
+      .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
+      .map(project => {
+        const pages = db.project_pages.filter(p => p.project_id === project.id)
+        const pageIds = new Set(pages.map(p => p.id))
+        const blockCount = db.project_page_blocks.filter(b => pageIds.has(b.project_page_id)).length
+        return { ...project, page_count: pages.length, block_count: blockCount }
+      })
+  )
+}
+
+export async function getProject(id: string) {
+  const db = await readDb()
+  const project = db.projects.find(p => p.id === id)
+  return project ? clone(project) : null
+}
+
+export async function updateProject(id: string, patch: { name?: string }) {
+  return withWriteLock(async db => {
+    const project = db.projects.find(p => p.id === id)
+    if (!project) return null
+    if (patch.name !== undefined) project.name = patch.name
+    project.updated_at = now()
+    return clone(project)
+  })
+}
+
+export async function deleteProject(id: string) {
+  return withWriteLock(async db => {
+    const pageIds = new Set(db.project_pages.filter(p => p.project_id === id).map(p => p.id))
+    db.project_page_blocks = db.project_page_blocks.filter(b => !pageIds.has(b.project_page_id))
+    db.project_pages = db.project_pages.filter(p => p.project_id !== id)
+    db.projects = db.projects.filter(p => p.id !== id)
+    return true
+  })
+}
+
+export async function listProjectPages(projectId: string) {
+  const db = await readDb()
+  return clone(
+    db.project_pages
+      .filter(p => p.project_id === projectId)
+      .sort((a, b) => a.order_index - b.order_index)
+  )
+}
+
+export async function listProjectPageBlocks(pageId: string) {
+  const db = await readDb()
+  return clone(
+    db.project_page_blocks
+      .filter(b => b.project_page_id === pageId)
+      .sort((a, b) => (a.position || 0) - (b.position || 0))
+  )
+}
+
+export async function deleteProjectPageBlock(blockId: string) {
+  return withWriteLock(async db => {
+    db.project_page_blocks = db.project_page_blocks.filter(b => b.id !== blockId)
+    return true
+  })
+}
+
+export async function saveCanvasToProject(projectId: string, blocks: Array<{ sectionId: string; position: number }>) {
+  return withWriteLock(async db => {
+    const project = db.projects.find(p => p.id === projectId)
+    if (!project) return null
+
+    // Get or create default page
+    let page = db.project_pages.find(p => p.project_id === projectId)
+    if (!page) {
+      page = {
+        id: randomUUID(),
+        project_id: projectId,
+        label: 'Page 1',
+        order_index: 0,
+        created_at: now()
+      }
+      db.project_pages.push(page)
+    }
+
+    // Clear existing blocks for this page
+    db.project_page_blocks = db.project_page_blocks.filter(b => b.project_page_id !== page!.id)
+
+    // Insert new blocks
+    for (const block of blocks) {
+      db.project_page_blocks.push({
+        id: randomUUID(),
+        project_page_id: page.id,
+        source_section_id: block.sectionId,
+        position: block.position,
+        render_mode: 'source_patch',
+        created_at: now()
+      })
+    }
+
+    project.updated_at = now()
+    return true
+  })
+}
+
+export async function loadCanvasFromProject(projectId: string) {
+  const db = await readDb()
+  const project = db.projects.find(p => p.id === projectId)
+  if (!project) return null
+
+  const pages = db.project_pages
+    .filter(p => p.project_id === projectId)
+    .sort((a, b) => a.order_index - b.order_index)
+
+  if (pages.length === 0) return { blocks: [], sections: [] }
+
+  const pageIds = new Set(pages.map(p => p.id))
+  const blocks = db.project_page_blocks
+    .filter(b => pageIds.has(b.project_page_id))
+    .sort((a, b) => (a.position || 0) - (b.position || 0))
+
+  const sectionIds = [...new Set(blocks.map(b => b.source_section_id).filter(Boolean))]
+  const sitesById = new Map(db.source_sites.map(s => [s.id, s]))
+  const pagesById = new Map(db.source_pages.map(p => [p.id, p]))
+
+  const sections = db.source_sections
+    .filter(s => sectionIds.includes(s.id))
+    .map(section => {
+      const site = sitesById.get(section.site_id)
+      const page = pagesById.get(section.page_id)
+      return {
+        ...section,
+        htmlUrl: (section.sanitized_html_storage_path || section.raw_html_storage_path)
+          ? `/api/sections/${section.id}/render`
+          : null,
+        source_sites: site
+          ? { normalized_domain: site.normalized_domain, genre: site.genre, tags: site.tags }
+          : null,
+        source_pages: page ? { url: page.url, title: page.title || '' } : null
+      }
+    })
+
+  return clone({ blocks, sections })
+}
+
+// ============================================================
+// Export CRUD
+// ============================================================
+
+export async function createExport(input: { project_id?: string | null; format: string }) {
+  return withWriteLock(async db => {
+    const row: ExportRow = {
+      id: randomUUID(),
+      project_id: input.project_id || null,
+      format: input.format,
+      status: 'pending',
+      created_at: now(),
+      updated_at: now()
+    }
+    db.exports.push(row)
+    return clone(row)
+  })
+}
+
+export async function getExport(id: string) {
+  const db = await readDb()
+  const row = db.exports.find(e => e.id === id)
+  return row ? clone(row) : null
+}
+
+export async function updateExport(id: string, patch: Partial<ExportRow>) {
+  return withWriteLock(async db => {
+    const row = db.exports.find(e => e.id === id)
+    if (!row) return null
+    Object.assign(row, patch)
+    row.updated_at = now()
     return clone(row)
   })
 }
