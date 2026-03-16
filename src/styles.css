@@ -2959,32 +2959,95 @@ body {
 }
 
 /* ========== Card Code Button ========== */
-.card-code-btn {
+.card-btn-group {
   position: absolute;
   top: 8px;
   right: 8px;
+  display: flex;
+  gap: 4px;
+  z-index: 5;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.library-card:hover .card-btn-group,
+.part-card:hover .card-btn-group {
+  opacity: 1;
+}
+.card-code-btn, .card-img-url-btn {
   width: 32px;
   height: 28px;
   border: none;
   border-radius: var(--radius-sm);
   background: rgba(0,0,0,0.6);
   color: #fff;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 700;
   cursor: pointer;
-  z-index: 5;
-  opacity: 0;
-  transition: opacity 0.15s;
   display: flex;
   align-items: center;
   justify-content: center;
 }
-.library-card:hover .card-code-btn,
-.part-card:hover .card-code-btn {
-  opacity: 1;
-}
-.card-code-btn:hover {
+.card-code-btn:hover, .card-img-url-btn:hover {
   background: rgba(0,0,0,0.85);
+}
+.card-img-url-btn.active {
+  background: #2563eb;
+}
+
+/* Image URL list in card */
+.card-image-urls {
+  border-top: 1px solid var(--border);
+  padding: 8px 12px;
+  background: var(--surface2);
+  max-height: 160px;
+  overflow-y: auto;
+}
+.card-image-urls-header {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+.card-image-urls-loading, .card-image-urls-empty {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.card-image-url-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+.card-image-url-link {
+  flex: 1;
+  font-size: 11px;
+  color: #2563eb;
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.card-image-url-link:hover {
+  text-decoration: underline;
+}
+.card-image-url-copy {
+  flex-shrink: 0;
+  border: none;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  font-size: 10px;
+  padding: 2px 6px;
+  cursor: pointer;
+  color: var(--text-muted);
+}
+.card-image-url-copy:hover {
+  background: var(--border);
+}
+.card-image-url-copy.copied {
+  background: #22c55e;
+  color: #fff;
+  border-color: #22c55e;
 }
 
 /* ========== Code Viewer Modal ========== */

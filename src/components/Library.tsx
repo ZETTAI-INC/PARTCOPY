@@ -4,10 +4,8 @@ import { SourceSection, GenreInfo, BlockFamilyInfo } from '../types'
 import { SourcePreviewFrame } from './SourcePreviewFrame'
 import { FAMILY_COLORS, FAMILY_META, FAMILY_META_MAP, FAMILY_GROUP_LABELS } from '../constants'
 import { CodePanel } from './CodePanel'
-import { ImageGallery } from './ImageGallery'
 
 type SortOption = 'newest' | 'confidence' | 'family' | 'source'
-type LibraryTab = 'sections' | 'images'
 
 interface Props {
   onAddToCanvas: (section: SourceSection) => void
@@ -30,7 +28,9 @@ export function Library({ onAddToCanvas }: Props) {
   const [onlySubs, setOnlySubs] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [codeViewId, setCodeViewId] = useState<string | null>(null)
-  const [tab, setTab] = useState<LibraryTab>('sections')
+  const [imageUrlsMap, setImageUrlsMap] = useState<Record<string, string[]>>({})
+  const [expandedImageId, setExpandedImageId] = useState<string | null>(null)
+  const [copiedUrl, setCopiedUrl] = useState<string | null>(null)
 
   const familyLabelMap = families.reduce<Record<string, string>>((acc, family) => {
     acc[family.key] = family.label_ja || family.label || family.key
@@ -126,6 +126,44 @@ export function Library({ onAddToCanvas }: Props) {
     setOnlySubs(false)
   }
 
+  const fetchImageUrls = useCallback(async (sectionId: string) => {
+    if (imageUrlsMap[sectionId]) return // already fetched
+    try {
+      const res = await apiFetch(`/api/sections/${sectionId}/html`)
+      if (!res.ok) return
+      const { html } = await res.json()
+      const urls: string[] = []
+      const imgRegex = /<img[^>]+src=["']([^"']+)["']/gi
+      let match
+      while ((match = imgRegex.exec(html)) !== null) {
+        const src = match[1]
+        if (src && !src.startsWith('data:')) urls.push(src)
+      }
+      // Also extract background-image urls
+      const bgRegex = /background-image:\s*url\(["']?([^"')]+)["']?\)/gi
+      while ((match = bgRegex.exec(html)) !== null) {
+        const src = match[1]
+        if (src && !src.startsWith('data:')) urls.push(src)
+      }
+      setImageUrlsMap(prev => ({ ...prev, [sectionId]: [...new Set(urls)] }))
+    } catch {}
+  }, [imageUrlsMap])
+
+  const handleCopyUrl = (url: string) => {
+    navigator.clipboard.writeText(url)
+    setCopiedUrl(url)
+    setTimeout(() => setCopiedUrl(null), 1500)
+  }
+
+  const toggleImageUrls = (sectionId: string) => {
+    if (expandedImageId === sectionId) {
+      setExpandedImageId(null)
+    } else {
+      setExpandedImageId(sectionId)
+      fetchImageUrls(sectionId)
+    }
+  }
+
   const totalGenreCount = genres.reduce((sum, genre) => sum + genre.count, 0)
   const hasActiveFilters = Boolean(
     selectedGenre ||
@@ -198,18 +236,6 @@ export function Library({ onAddToCanvas }: Props) {
       </div>
 
       <div className="library-main">
-        <div className="library-tab-bar">
-          <button className={`library-tab ${tab === 'sections' ? 'active' : ''}`} onClick={() => setTab('sections')}>
-            セクション
-          </button>
-          <button className={`library-tab ${tab === 'images' ? 'active' : ''}`} onClick={() => setTab('images')}>
-            画像
-          </button>
-        </div>
-
-        {tab === 'images' && <ImageGallery />}
-
-        {tab === 'sections' && <>
         <div className="library-toolbar">
           <div className="library-search-row">
             <input
@@ -284,9 +310,20 @@ export function Library({ onAddToCanvas }: Props) {
                     <span className="part-sub-badge">部品</span>
                   )}
                 </div>
-                <button className="card-code-btn" onClick={(e) => { e.stopPropagation(); setCodeViewId(section.id) }} title="コードを見る">
-                  &lt;/&gt;
-                </button>
+                <div className="card-btn-group">
+                  {section.features_jsonb?.hasImages && (
+                    <button
+                      className={`card-img-url-btn ${expandedImageId === section.id ? 'active' : ''}`}
+                      onClick={(e) => { e.stopPropagation(); toggleImageUrls(section.id) }}
+                      title="画像URLを表示"
+                    >
+                      IMG
+                    </button>
+                  )}
+                  <button className="card-code-btn" onClick={(e) => { e.stopPropagation(); setCodeViewId(section.id) }} title="コードを見る">
+                    &lt;/&gt;
+                  </button>
+                </div>
                 {hoveredId === section.id && (
                   <div className="part-overlay-actions">
                     <button className="add-btn-large" onClick={() => onAddToCanvas(section)}>+ 追加</button>
@@ -308,10 +345,29 @@ export function Library({ onAddToCanvas }: Props) {
                   <div className="part-source">{section.source_sites?.normalized_domain || ''}</div>
                 </div>
               </div>
+              {expandedImageId === section.id && (
+                <div className="card-image-urls">
+                  <div className="card-image-urls-header">画像URL一覧</div>
+                  {!imageUrlsMap[section.id] && <div className="card-image-urls-loading">読み込み中...</div>}
+                  {imageUrlsMap[section.id]?.length === 0 && <div className="card-image-urls-empty">画像が見つかりません</div>}
+                  {imageUrlsMap[section.id]?.map((url, i) => (
+                    <div key={i} className="card-image-url-row">
+                      <a href={url} target="_blank" rel="noopener noreferrer" className="card-image-url-link" title={url}>
+                        {url.split('/').pop()?.split('?')[0] || url}
+                      </a>
+                      <button
+                        className={`card-image-url-copy ${copiedUrl === url ? 'copied' : ''}`}
+                        onClick={(e) => { e.stopPropagation(); handleCopyUrl(url) }}
+                      >
+                        {copiedUrl === url ? 'OK' : 'copy'}
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           ))}
         </div>
-        </>}
       </div>
 
       <CodePanel
