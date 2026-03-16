@@ -63,6 +63,7 @@ interface SourceSectionRow extends JsonObject {
   block_family?: string
   block_variant?: string
   classifier_confidence?: number
+  quality_score?: number
   text_summary?: string
   features_jsonb?: Record<string, any>
   layout_signature?: string

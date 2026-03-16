@@ -39,8 +39,12 @@ interface AIClassification {
  * Classify a batch of sections using Claude Haiku.
  * Returns array of classifications in the same order as input.
  */
+type SectionInput = { index: number; textContent: string; features: Record<string, any>; classTokens: string[]; tagName: string; boundingBox: { height: number; width: number }; outerHTMLSnippet?: string }
+
+const BATCH_SIZE = 15
+
 export async function classifySectionsWithAI(
-  sections: { index: number; textContent: string; features: Record<string, any>; classTokens: string[]; tagName: string; boundingBox: { height: number; width: number }; outerHTMLSnippet?: string }[]
+  sections: SectionInput[]
 ): Promise<AIClassification[]> {
   const apiKey = process.env.ANTHROPIC_API_KEY
   if (!apiKey || sections.length === 0) {
@@ -55,6 +59,20 @@ export async function classifySectionsWithAI(
 
   const client = new Anthropic({ apiKey })
 
+  // Split into batches to avoid exceeding token limits
+  const results: AIClassification[] = []
+  for (let start = 0; start < sections.length; start += BATCH_SIZE) {
+    const batch = sections.slice(start, start + BATCH_SIZE)
+    const batchResults = await classifyBatch(client, batch)
+    results.push(...batchResults)
+  }
+  return results
+}
+
+async function classifyBatch(
+  client: Anthropic,
+  sections: SectionInput[]
+): Promise<AIClassification[]> {
   const sectionDescriptions = sections.map((s, i) => {
     const text = s.textContent.slice(0, 400).trim()
     const classes = s.classTokens.slice(0, 15).join(', ')
@@ -102,7 +120,7 @@ Webデザイナーが「このパーツのレイアウト構造を参考にし�
 - 0.1-0.2: 壊れている、意味不明、1行だけ、装飾のないテキスト段落
 
 ## 出力形式
-JSON配列のみ返してください（説明文不要）:
+JSON配列のみ返してください（説明文不要）。セクション数: ${sections.length}個
 [{"type": "...", "variant": "日本語の短い説明(例: 3カラムカード、横スクロール、アコーディオン式)", "confidence": 0.0-1.0, "quality_score": 0.0-1.0, "reason": "判断理由(10文字程度)"}]
 
 ## セクションデータ
@@ -112,7 +130,7 @@ ${sectionDescriptions}`
   try {
     const response = await client.messages.create({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 1024,
+      max_tokens: 4096,
       messages: [{ role: 'user', content: prompt }]
     })
 
@@ -140,7 +158,7 @@ ${sectionDescriptions}`
       }
     })
   } catch (err) {
-    console.error('AI classification failed, falling back to heuristic:', err)
+    console.error('AI classification failed for batch, falling back to heuristic:', err)
     // Fallback to heuristic
     return sections.map((s, i) => {
       const raw: RawSection = {

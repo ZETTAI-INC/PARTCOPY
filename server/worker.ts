@@ -452,7 +452,7 @@ async function processJob(job: any) {
         classTokens: s.classTokens,
         tagName: s.tagName,
         boundingBox: s.boundingBox,
-        outerHTMLSnippet: s.outerHTML.slice(0, 8000)
+        outerHTMLSnippet: s.outerHTML.slice(0, 1500)
       }))
     )
 
