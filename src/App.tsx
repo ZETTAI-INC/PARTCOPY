@@ -16,6 +16,11 @@ const CANVAS_STORAGE_KEY = 'partcopy:canvas'
 const CANVAS_STORAGE_VERSION = 1
 const EXCLUDED_FAMILIES = new Set(['navigation', 'footer'])
 
+// 警告しきい値
+const WARN_LIBRARY_SECTIONS = 200
+const WARN_CANVAS_BLOCKS = 15
+const WARN_SITES = 10
+
 function loadCanvasFromStorage(): CanvasBlock[] {
   try {
     const raw = localStorage.getItem(CANVAS_STORAGE_KEY)
@@ -33,6 +38,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null)
   const [jobStatus, setJobStatus] = useState<string | null>(null)
   const [view, setView] = useState<View>('editor')
+  const [dismissedWarnings, setDismissedWarnings] = useState<Set<string>>(new Set())
   const pollRef = useRef<NodeJS.Timeout | null>(null)
 
   // Persist canvas to localStorage (debounced to avoid excessive writes)
@@ -78,6 +84,32 @@ export default function App() {
       .map(section => section.source_sites?.normalized_domain)
       .filter((domain): domain is string => Boolean(domain))
   ).size
+
+  // 警告メッセージ生成
+  const warnings: Array<{ key: string; message: string }> = []
+  if (sections.length >= WARN_LIBRARY_SECTIONS) {
+    warnings.push({
+      key: 'library',
+      message: `ライブラリのセクション数が${sections.length}件に達しています。パフォーマンスやストレージに影響する可能性があります。不要なセクションを削除してください。`
+    })
+  }
+  if (canvas.length >= WARN_CANVAS_BLOCKS) {
+    warnings.push({
+      key: 'canvas',
+      message: `Canvasのブロック数が${canvas.length}個です。ブロックが多いとプレビューや書き出しが重くなる場合があります。`
+    })
+  }
+  if (sourceCount >= WARN_SITES) {
+    warnings.push({
+      key: 'sites',
+      message: `${sourceCount}サイト分のデータが蓄積されています。分析のたびにAI分類コスト（1回約3〜6円）が発生します。`
+    })
+  }
+  const activeWarnings = warnings.filter(w => !dismissedWarnings.has(w.key))
+
+  const dismissWarning = (key: string) => {
+    setDismissedWarnings(prev => new Set([...prev, key]))
+  }
 
   const stopPolling = () => {
     if (pollRef.current) {
@@ -254,6 +286,18 @@ export default function App() {
           </div>
         </div>
       </header>
+
+      {activeWarnings.length > 0 && (
+        <div className="warning-banner-container">
+          {activeWarnings.map(w => (
+            <div key={w.key} className="warning-banner">
+              <span className="warning-banner-icon">!</span>
+              <span className="warning-banner-text">{w.message}</span>
+              <button className="warning-banner-dismiss" onClick={() => dismissWarning(w.key)}>OK</button>
+            </div>
+          ))}
+        </div>
+      )}
 
       {view !== 'library' && (
         <URLInput onSubmit={handleExtract} loading={loading} error={error} jobStatus={jobStatus} />

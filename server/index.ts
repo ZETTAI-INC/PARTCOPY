@@ -52,19 +52,20 @@ app.use(helmet({
   contentSecurityPolicy: {
     directives: {
       defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-inline'"],  // iframeの編集機能で必要
-      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
-      fontSrc: ["'self'", "https://fonts.gstatic.com", "data:", "blob:"],
-      imgSrc: ["'self'", "data:", "blob:", "https://*.supabase.co"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'", "https:", "http:"],  // 外部サイトのCSS
+      fontSrc: ["'self'", "https:", "http:", "data:", "blob:"],    // 外部フォント
+      imgSrc: ["'self'", "data:", "blob:", "https:", "http:"],     // 外部画像
       connectSrc: ["'self'"],
       frameSrc: ["'self'"],
+      frameAncestors: ["'self'"],  // 自サイトiframeのみ許可
       objectSrc: ["'none'"],
       baseUri: ["'self'"],
       formAction: ["'self'"]
     }
   },
-  crossOriginEmbedderPolicy: false,   // iframeプレビュー用
-  crossOriginResourcePolicy: { policy: 'same-site' }
+  crossOriginEmbedderPolicy: false,
+  crossOriginResourcePolicy: { policy: 'cross-origin' }  // iframe内リソース読み込み用
 }))
 
 // ============================================================
@@ -89,7 +90,7 @@ app.use(cors({
 // ============================================================
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15分
-  max: 300,                   // 15分あたり300リクエスト
+  max: 3000,                  // 15分あたり3000リクエスト
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many requests, please try again later' }
@@ -1066,6 +1067,8 @@ app.get('/api/sections/:sectionId/render', requireValidId('sectionId'), async (r
 
     const html = buildRenderDocument(storedHtml, pageOrigin, { extraHead: cssLink, skipBase: true })
 
+    // iframe内で外部リソースを読み込むためCSP解除
+    res.removeHeader('Content-Security-Policy')
     res.setHeader('Content-Type', 'text/html; charset=utf-8')
     res.setHeader('Cache-Control', 'no-cache')
     res.send(html)
@@ -1587,6 +1590,8 @@ app.get('/api/sections/:sectionId/editable-render', requireValidId('sectionId'),
       extraBodyEnd: editorScript
     })
 
+    // iframe内で外部リソースを読み込むためCSP解除
+    res.removeHeader('Content-Security-Policy')
     res.setHeader('Content-Type', 'text/html; charset=utf-8')
     res.send(html)
   } catch (err: any) {
