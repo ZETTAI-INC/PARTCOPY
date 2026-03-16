@@ -3,8 +3,10 @@ import { SourceSection, GenreInfo, BlockFamilyInfo } from '../types'
 import { SourcePreviewFrame } from './SourcePreviewFrame'
 import { FAMILY_COLORS, FAMILY_META, FAMILY_META_MAP, FAMILY_GROUP_LABELS } from '../constants'
 import { CodePanel } from './CodePanel'
+import { ImageGallery } from './ImageGallery'
 
 type SortOption = 'newest' | 'confidence' | 'family' | 'source'
+type LibraryTab = 'sections' | 'images'
 
 interface Props {
   onAddToCanvas: (section: SourceSection) => void
@@ -27,6 +29,7 @@ export function Library({ onAddToCanvas }: Props) {
   const [onlySubs, setOnlySubs] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [codeViewId, setCodeViewId] = useState<string | null>(null)
+  const [tab, setTab] = useState<LibraryTab>('sections')
 
   const familyLabelMap = families.reduce<Record<string, string>>((acc, family) => {
     acc[family.key] = family.label_ja || family.label || family.key
@@ -194,6 +197,18 @@ export function Library({ onAddToCanvas }: Props) {
       </div>
 
       <div className="library-main">
+        <div className="library-tab-bar">
+          <button className={`library-tab ${tab === 'sections' ? 'active' : ''}`} onClick={() => setTab('sections')}>
+            セクション
+          </button>
+          <button className={`library-tab ${tab === 'images' ? 'active' : ''}`} onClick={() => setTab('images')}>
+            画像
+          </button>
+        </div>
+
+        {tab === 'images' && <ImageGallery />}
+
+        {tab === 'sections' && <>
         <div className="library-toolbar">
           <div className="library-search-row">
             <input
@@ -295,6 +310,7 @@ export function Library({ onAddToCanvas }: Props) {
             </div>
           ))}
         </div>
+        </>}
       </div>
 
       <CodePanel

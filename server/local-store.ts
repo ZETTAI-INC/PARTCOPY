@@ -546,6 +546,22 @@ export async function createSourcePage(input: Omit<SourcePageRow, 'id' | 'create
   })
 }
 
+export async function listSiteImages(siteId: string) {
+  return withWriteLock(async (db: LocalDB) => {
+    return db.page_assets
+      .filter((a: any) => {
+        const page = db.source_pages.find((p: any) => p.id === a.page_id)
+        return page && (page as any).site_id === siteId && a.asset_type === 'image'
+      })
+      .map((a: any) => ({
+        originalUrl: a.url,
+        storagePath: a.storage_path || '',
+        downloadUrl: `/assets/${a.storage_path || ''}`,
+        size: a.size_bytes || 0
+      }))
+  })
+}
+
 export async function insertPageAssets(records: JsonObject[]) {
   return withWriteLock(async db => {
     for (const record of records) {

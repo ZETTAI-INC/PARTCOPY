@@ -954,6 +954,50 @@ app.get('/api/library/families', async (req, res) => {
 })
 
 // ============================================================
+// Site images: list and download
+// ============================================================
+app.get('/api/sites/:siteId/images', async (req, res) => {
+  const { siteId } = req.params
+  try {
+    if (HAS_SUPABASE) {
+      // Get the latest crawl run for this site
+      const { data: runs } = await supabaseAdmin
+        .from('crawl_runs')
+        .select('id')
+        .eq('site_id', siteId)
+        .eq('status', 'done')
+        .order('finished_at', { ascending: false })
+        .limit(1)
+      if (!runs?.length) { res.json({ images: [] }); return }
+      const jobId = runs[0].id
+
+      // Read assets.json from storage
+      const { data: file, error } = await supabaseAdmin.storage
+        .from(STORAGE_BUCKETS.RAW_HTML)
+        .download(`${siteId}/${jobId}/assets.json`)
+      if (error || !file) { res.json({ images: [] }); return }
+      const assets: any[] = JSON.parse(await file.text())
+      const images = assets
+        .filter((a: any) => a.type === 'image')
+        .map((a: any) => ({
+          originalUrl: a.originalUrl,
+          storagePath: a.storagePath,
+          downloadUrl: `/assets/${a.storagePath}`,
+          size: a.size
+        }))
+      res.json({ images, siteId, jobId })
+    } else {
+      // Local mode: read from local store
+      const { listSiteImages } = await import('./local-store.js')
+      const images = await listSiteImages(siteId)
+      res.json({ images, siteId })
+    }
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ============================================================
 // Block variants
 // ============================================================
 app.get('/api/block-variants', async (req, res) => {
