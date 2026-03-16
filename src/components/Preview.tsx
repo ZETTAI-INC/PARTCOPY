@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react'
+import { apiFetch } from '../api'
 import { SourceSection, CanvasBlock, OptimizeConfig } from '../types'
 import { SourcePreviewFrame } from './SourcePreviewFrame'
 
@@ -48,7 +49,7 @@ export function Preview({ items }: Props) {
         return
       }
       const sectionIds = items.map(item => item.section.id)
-      const res = await fetch('/api/canvas/export-html', {
+      const res = await apiFetch('/api/canvas/export-html', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sectionIds })
@@ -68,7 +69,7 @@ export function Preview({ items }: Props) {
     setShowConfigModal(false)
     try {
       const sectionIds = items.map(item => item.section.id)
-      const res = await fetch('/api/canvas/optimize', {
+      const res = await apiFetch('/api/canvas/optimize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sectionIds, config })

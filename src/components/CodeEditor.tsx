@@ -3,6 +3,7 @@
  * 左: コードエディタ (textarea) / 右: ライブプレビュー (iframe)
  */
 import React, { useState, useEffect, useRef, useCallback } from 'react'
+import { apiFetch } from '../api'
 
 interface Props {
   sectionId: string
@@ -39,7 +40,7 @@ export function CodeEditor({ sectionId, onClose, onSaved }: Props) {
 
   useEffect(() => {
     setLoading(true)
-    fetch(`/api/sections/${sectionId}/html`)
+    apiFetch(`/api/sections/${sectionId}/html`)
       .then(r => r.json())
       .then(data => {
         setHtml(data.html || '')
@@ -57,7 +58,7 @@ export function CodeEditor({ sectionId, onClose, onSaved }: Props) {
   const handleSave = useCallback(async () => {
     setSaving(true)
     try {
-      const res = await fetch(`/api/sections/${sectionId}/html`, {
+      const res = await apiFetch(`/api/sections/${sectionId}/html`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ html })

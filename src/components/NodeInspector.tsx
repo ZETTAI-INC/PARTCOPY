@@ -3,6 +3,7 @@
  * テキスト、リンク、画像、スタイルトークンの編集 → パッチ生成。
  */
 import React, { useState, useEffect, useCallback } from 'react'
+import { apiFetch } from '../api'
 import type { SelectedNode } from './EditableSourceFrame'
 
 interface NodeDetail {
@@ -39,7 +40,7 @@ export function NodeInspector({ sectionId, selectedNode, onApplyPatch, patchSetI
   // ノード選択時にDBからノード詳細を取得
   useEffect(() => {
     if (!selectedNode) { setNodeDetail(null); return }
-    fetch(`/api/sections/${sectionId}/dom`)
+    apiFetch(`/api/sections/${sectionId}/dom`)
       .then(r => r.json())
       .then(data => {
         const node = (data.nodes || []).find((n: NodeDetail) => n.stable_key === selectedNode.stableKey)
@@ -103,7 +104,7 @@ export function NodeInspector({ sectionId, selectedNode, onApplyPatch, patchSetI
 
     // パッチセットがなければ作成
     if (!currentPatchSetId) {
-      const res = await fetch(`/api/sections/${sectionId}/patch-sets`, {
+      const res = await apiFetch(`/api/sections/${sectionId}/patch-sets`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ label: 'Edit session' })
@@ -114,7 +115,7 @@ export function NodeInspector({ sectionId, selectedNode, onApplyPatch, patchSetI
 
     if (!currentPatchSetId) return
 
-    await fetch(`/api/patch-sets/${currentPatchSetId}/patches`, {
+    await apiFetch(`/api/patch-sets/${currentPatchSetId}/patches`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ patches: pendingPatches })

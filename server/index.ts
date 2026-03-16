@@ -4,6 +4,8 @@
  */
 import express from 'express'
 import cors from 'cors'
+import helmet from 'helmet'
+import rateLimit from 'express-rate-limit'
 import {
   addPatches,
   createCrawlRun,
@@ -42,19 +44,112 @@ import { STORAGE_BUCKETS } from './storage-config.js'
 import { logger } from './logger.js'
 
 const app = express()
+
+// ============================================================
+// Security: Helmet headers
+// ============================================================
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],  // iframeの編集機能で必要
+      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
+      fontSrc: ["'self'", "https://fonts.gstatic.com", "data:", "blob:"],
+      imgSrc: ["'self'", "data:", "blob:", "https://*.supabase.co"],
+      connectSrc: ["'self'"],
+      frameSrc: ["'self'"],
+      objectSrc: ["'none'"],
+      baseUri: ["'self'"],
+      formAction: ["'self'"]
+    }
+  },
+  crossOriginEmbedderPolicy: false,   // iframeプレビュー用
+  crossOriginResourcePolicy: { policy: 'same-site' }
+}))
+
+// ============================================================
+// Security: CORS
+// ============================================================
 app.use(cors({
   origin: (origin, callback) => {
     const allowed = (process.env.CORS_ORIGIN || 'http://localhost:5180,http://127.0.0.1:5180').split(',')
-    // Allow requests with no origin (curl, server-to-server)
     if (!origin || allowed.includes(origin)) {
       callback(null, true)
     } else {
-      callback(null, false)
+      callback(new Error('CORS not allowed'))
     }
   },
-  credentials: true
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-API-Key']
 }))
+
+// ============================================================
+// Security: Rate limiting
+// ============================================================
+const globalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15分
+  max: 300,                   // 15分あたり300リクエスト
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests, please try again later' }
+})
+
+const crawlLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,  // 1時間
+  max: 10,                     // 1時間あたり10クロール
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Crawl rate limit exceeded. Try again later.' }
+})
+
+const aiLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,  // 1時間
+  max: 20,                     // 1時間あたり20回AI呼び出し
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'AI API rate limit exceeded. Try again later.' }
+})
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,  // 15分
+  max: 30,                     // 15分あたり30回
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many attempts. Try again later.' }
+})
+
+app.use('/api/', globalLimiter)
+
+// ============================================================
+// Security: API Key authentication
+// ============================================================
+const API_KEY = process.env.PARTCOPY_API_KEY || ''
+
+function requireApiKey(req: express.Request, res: express.Response, next: express.NextFunction) {
+  // 開発環境でAPI_KEY未設定なら認証スキップ
+  if (!API_KEY) { next(); return }
+
+  const key = req.headers['x-api-key'] || req.query.apikey
+  if (key === API_KEY) {
+    next()
+  } else {
+    res.status(401).json({ error: 'Unauthorized: Invalid or missing API key' })
+  }
+}
+
+// ============================================================
+// Security: Input sanitization
+// ============================================================
+function sanitizeString(input: unknown, maxLen = 500): string {
+  if (typeof input !== 'string') return ''
+  return input.slice(0, maxLen).replace(/[<>]/g, '')
+}
+
 app.use(express.json({ limit: '1mb' }))
+
+// Disable X-Powered-By (redundant with helmet but explicit)
+app.disable('x-powered-by')
 
 // ============================================================
 // Health check
@@ -768,7 +863,7 @@ app.get('/api/storage/:bucket', async (req, res) => {
 // ============================================================
 // Extract: Create a crawl job
 // ============================================================
-app.post('/api/extract', async (req, res) => {
+app.post('/api/extract', crawlLimiter, requireApiKey, async (req, res) => {
   const { url, genre, tags } = req.body
   if (!url || typeof url !== 'string' || !/^https?:\/\/.+/.test(url)) {
     res.status(400).json({ error: 'Valid URL (http/https) is required' })
@@ -1011,7 +1106,7 @@ app.get('/api/block-variants', async (req, res) => {
 // ============================================================
 // Delete section from library
 // ============================================================
-app.delete('/api/library/:id', async (req, res) => {
+app.delete('/api/library/:id', requireApiKey, async (req, res) => {
   try {
     const section = await getSectionRecord(req.params.id)
     if (section && HAS_SUPABASE) {
@@ -1122,7 +1217,7 @@ app.put('/api/sections/:sectionId/html', async (req, res) => {
 // ============================================================
 // Section: Delete
 // ============================================================
-app.delete('/api/sections/:sectionId', async (req, res) => {
+app.delete('/api/sections/:sectionId', requireApiKey, async (req, res) => {
   const { sectionId } = req.params
   try {
     // Optionally clean up storage files
@@ -1409,7 +1504,7 @@ app.get('/api/sections/:sectionId/editable-render', async (req, res) => {
 // ============================================================
 // Patch Sets: Create
 // ============================================================
-app.post('/api/sections/:sectionId/patch-sets', async (req, res) => {
+app.post('/api/sections/:sectionId/patch-sets', requireApiKey, async (req, res) => {
   const { sectionId } = req.params
   const { projectId, label } = req.body
 
@@ -1437,7 +1532,7 @@ app.post('/api/sections/:sectionId/patch-sets', async (req, res) => {
 // ============================================================
 // Patch Sets: Add patches
 // ============================================================
-app.post('/api/patch-sets/:patchSetId/patches', async (req, res) => {
+app.post('/api/patch-sets/:patchSetId/patches', requireApiKey, async (req, res) => {
   const { patchSetId } = req.params
   const { patches } = req.body // Array of { nodeStableKey, op, payload }
 
@@ -1502,7 +1597,7 @@ app.get('/api/patch-sets/:patchSetId', async (req, res) => {
 // ============================================================
 // Project Page Blocks: CRUD
 // ============================================================
-app.post('/api/projects/:projectId/page-blocks', async (req, res) => {
+app.post('/api/projects/:projectId/page-blocks', requireApiKey, async (req, res) => {
   const { projectId } = req.params
   const { pageId, sectionId, patchSetId, blockInstanceId, renderMode, position } = req.body
 
@@ -1540,7 +1635,7 @@ app.post('/api/projects/:projectId/page-blocks', async (req, res) => {
 // ============================================================
 // Project Management API
 // ============================================================
-app.post('/api/projects', async (req, res) => {
+app.post('/api/projects', requireApiKey, async (req, res) => {
   const { name } = req.body
   if (!name || typeof name !== 'string' || name.trim().length === 0) {
     res.status(400).json({ error: 'name is required' })
@@ -1636,7 +1731,7 @@ app.put('/api/projects/:id', async (req, res) => {
   }
 })
 
-app.delete('/api/projects/:id', async (req, res) => {
+app.delete('/api/projects/:id', requireApiKey, async (req, res) => {
   try {
     if (!HAS_SUPABASE) {
       await deleteProject(req.params.id)
@@ -1663,7 +1758,7 @@ app.delete('/api/projects/:id', async (req, res) => {
 // ============================================================
 // Canvas Save / Load
 // ============================================================
-app.post('/api/projects/:id/save-canvas', async (req, res) => {
+app.post('/api/projects/:id/save-canvas', requireApiKey, async (req, res) => {
   const { blocks } = req.body
   if (!Array.isArray(blocks)) {
     res.status(400).json({ error: 'blocks array is required' })
@@ -1760,7 +1855,7 @@ app.get('/api/projects/:id/load-canvas', async (req, res) => {
 // ============================================================
 import { generateFromBlueprint } from './ai-optimizer.js'
 
-app.post('/api/canvas/optimize', async (req, res) => {
+app.post('/api/canvas/optimize', aiLimiter, requireApiKey, async (req, res) => {
   const { sectionIds, config } = req.body
   if (!Array.isArray(sectionIds) || sectionIds.length === 0) {
     res.status(400).json({ error: 'sectionIds array is required' })
@@ -1864,7 +1959,7 @@ function scopeCssRules(css: string, scopeClass: string): string {
 // ============================================================
 // HTML Export
 // ============================================================
-app.post('/api/canvas/export-html', async (req, res) => {
+app.post('/api/canvas/export-html', aiLimiter, requireApiKey, async (req, res) => {
   const { sectionIds } = req.body
   if (!Array.isArray(sectionIds) || sectionIds.length === 0) {
     res.status(400).json({ error: 'sectionIds array is required' })

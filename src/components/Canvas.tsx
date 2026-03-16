@@ -1,4 +1,5 @@
 import React, { useState, useRef, useCallback } from 'react'
+import { apiFetch } from '../api'
 import { SourceSection, CanvasBlock } from '../types'
 import { SourcePreviewFrame } from './SourcePreviewFrame'
 import { EditableSourceFrame, type SelectedNode } from './EditableSourceFrame'
@@ -114,7 +115,7 @@ export function Canvas({ items, onRemove, onMove, onAddToCanvas }: Props) {
     const item = items[editingIndex]
     if (!item) return
     // Save patch to server automatically
-    fetch(`/api/sections/${item.section.id}/patch-sets`, {
+    apiFetch(`/api/sections/${item.section.id}/patch-sets`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ label: 'Inline edit' })
@@ -123,7 +124,7 @@ export function Canvas({ items, onRemove, onMove, onAddToCanvas }: Props) {
       .then(data => {
         const patchSetId = data.patchSet?.id
         if (!patchSetId) return
-        return fetch(`/api/patch-sets/${patchSetId}/patches`, {
+        return apiFetch(`/api/patch-sets/${patchSetId}/patches`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ patches: [{ nodeStableKey: stableKey, op, payload }] })

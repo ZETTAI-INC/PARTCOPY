@@ -10,6 +10,7 @@
  *   parent → iframe: { type: 'pc:apply-patch', patch: { nodeStableKey, op, payload } }
  */
 import React, { useRef, useEffect, useState, useCallback } from 'react'
+import { apiFetch } from '../api'
 
 const DESKTOP_WIDTH = 1440
 
@@ -58,7 +59,7 @@ export function EditableSourceFrame({ sectionId, maxHeight, onNodeSelect, onInli
     setError(false)
     setIframeSrc(null)
 
-    fetch(`/api/sections/${sectionId}/editable-render`, { method: 'HEAD' })
+    apiFetch(`/api/sections/${sectionId}/editable-render`, { method: 'HEAD' })
       .then(r => {
         if (r.ok) {
           setIframeSrc(`/api/sections/${sectionId}/editable-render`)

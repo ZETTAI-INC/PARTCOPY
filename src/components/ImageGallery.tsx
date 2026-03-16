@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react'
+import { apiFetch } from '../api'
 
 interface SiteImage {
   originalUrl: string
@@ -24,7 +25,7 @@ export function ImageGallery() {
     setError(null)
     try {
       // Get all sites from sections
-      const res = await fetch('/api/library?limit=200')
+      const res = await apiFetch('/api/library?limit=200')
       const data = await res.json()
       const sections = data.sections || []
 
@@ -40,7 +41,7 @@ export function ImageGallery() {
       const entries: SiteEntry[] = []
       for (const [siteId, domain] of siteMap) {
         try {
-          const imgRes = await fetch(`/api/sites/${siteId}/images`)
+          const imgRes = await apiFetch(`/api/sites/${siteId}/images`)
           const imgData = await imgRes.json()
           if (imgData.images?.length > 0) {
             entries.push({ siteId, domain, images: imgData.images })

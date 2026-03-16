@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react'
+import { apiFetch } from '../api'
 import { Project, CanvasBlock, SourceSection } from '../types'
 
 interface Props {
@@ -18,7 +19,7 @@ export function ProjectManager({ canvas, setCanvas, setSections, onSwitchToEdito
 
   const fetchProjects = useCallback(async () => {
     try {
-      const res = await fetch('/api/projects')
+      const res = await apiFetch('/api/projects')
       const data = await res.json()
       setProjects(data.projects || [])
     } catch {
@@ -34,7 +35,7 @@ export function ProjectManager({ canvas, setCanvas, setSections, onSwitchToEdito
     e.preventDefault()
     if (!newName.trim()) return
     try {
-      const res = await fetch('/api/projects', {
+      const res = await apiFetch('/api/projects', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name: newName.trim() })
@@ -51,7 +52,7 @@ export function ProjectManager({ canvas, setCanvas, setSections, onSwitchToEdito
     setSaving(projectId)
     try {
       const blocks = canvas.map(c => ({ sectionId: c.sectionId, position: c.position }))
-      await fetch(`/api/projects/${projectId}/save-canvas`, {
+      await apiFetch(`/api/projects/${projectId}/save-canvas`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ blocks })
@@ -67,7 +68,7 @@ export function ProjectManager({ canvas, setCanvas, setSections, onSwitchToEdito
   const handleLoad = async (projectId: string) => {
     setLoadingProject(projectId)
     try {
-      const res = await fetch(`/api/projects/${projectId}/load-canvas`)
+      const res = await apiFetch(`/api/projects/${projectId}/load-canvas`)
       if (!res.ok) return
       const data = await res.json()
       const blocks: CanvasBlock[] = (data.blocks || []).map((b: any, i: number) => ({
@@ -99,7 +100,7 @@ export function ProjectManager({ canvas, setCanvas, setSections, onSwitchToEdito
 
   const handleDelete = async (projectId: string) => {
     try {
-      await fetch(`/api/projects/${projectId}`, { method: 'DELETE' })
+      await apiFetch(`/api/projects/${projectId}`, { method: 'DELETE' })
       setConfirmDelete(null)
       fetchProjects()
     } catch {

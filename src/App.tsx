@@ -7,6 +7,7 @@ import { Preview } from './components/Preview'
 import { Library } from './components/Library'
 import { ProjectManager } from './components/ProjectManager'
 import { ErrorBoundary } from './components/ErrorBoundary'
+import { apiFetch } from './api'
 import './styles.css'
 
 type View = 'editor' | 'preview' | 'library' | 'projects'
@@ -47,7 +48,7 @@ export default function App() {
     const stored = loadCanvasFromStorage()
     if (stored.length === 0) return
     const sectionIds = [...new Set(stored.map(c => c.sectionId))]
-    fetch(`/api/library?limit=200`)
+    apiFetch(`/api/library?limit=200`)
       .then(r => r.json())
       .then(data => {
         const libSections: SourceSection[] = data.sections || []
@@ -91,7 +92,7 @@ export default function App() {
     stopPolling()
     pollRef.current = setInterval(async () => {
       try {
-        const res = await fetch(`/api/jobs/${jobId}`)
+        const res = await apiFetch(`/api/jobs/${jobId}`)
         const { job } = await res.json() as { job: CrawlJob }
         const STATUS_LABELS: Record<string, string> = {
           queued: 'キュー待機中...',
@@ -107,7 +108,7 @@ export default function App() {
         if (job.status === 'done') {
           stopPolling()
           // Fetch sections
-          const secRes = await fetch(`/api/jobs/${jobId}/sections`)
+          const secRes = await apiFetch(`/api/jobs/${jobId}/sections`)
           const { sections: secs } = await secRes.json()
           setSections(prev => {
             const seen = new Set(prev.map(section => section.id))
@@ -138,7 +139,7 @@ export default function App() {
     setError(null)
     setJobStatus('分析開始...')
     try {
-      const res = await fetch('/api/extract', {
+      const res = await apiFetch('/api/extract', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ url, genre, tags })
@@ -209,7 +210,7 @@ export default function App() {
 
   const removeSection = useCallback(async (sectionId: string) => {
     try {
-      await fetch(`/api/sections/${sectionId}`, { method: 'DELETE' })
+      await apiFetch(`/api/sections/${sectionId}`, { method: 'DELETE' })
     } catch {}
     setSections(prev => prev.filter(s => s.id !== sectionId))
     setCanvas(prev => prev.filter(c => c.sectionId !== sectionId))

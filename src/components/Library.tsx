@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react'
+import { apiFetch } from '../api'
 import { SourceSection, GenreInfo, BlockFamilyInfo } from '../types'
 import { SourcePreviewFrame } from './SourcePreviewFrame'
 import { FAMILY_COLORS, FAMILY_META, FAMILY_META_MAP, FAMILY_GROUP_LABELS } from '../constants'
@@ -39,8 +40,8 @@ export function Library({ onAddToCanvas }: Props) {
   const fetchMeta = useCallback(async () => {
     try {
       const [genreResponse, familyResponse] = await Promise.all([
-        fetch('/api/library/genres'),
-        fetch('/api/library/families')
+        apiFetch('/api/library/genres'),
+        apiFetch('/api/library/families')
       ])
 
       if (!genreResponse.ok || !familyResponse.ok) {
@@ -72,7 +73,7 @@ export function Library({ onAddToCanvas }: Props) {
       if (onlyImages) params.set('hasImages', 'true')
       if (onlySubs) params.set('onlySubs', 'true')
 
-      const response = await fetch(`/api/library?${params.toString()}`)
+      const response = await apiFetch(`/api/library?${params.toString()}`)
       if (!response.ok) {
         const payload = await response.json().catch(() => ({}))
         throw new Error(payload.error || 'ライブラリの取得に失敗しました')
@@ -100,7 +101,7 @@ export function Library({ onAddToCanvas }: Props) {
     setError(null)
 
     try {
-      const response = await fetch(`/api/library/${id}`, { method: 'DELETE' })
+      const response = await apiFetch(`/api/library/${id}`, { method: 'DELETE' })
       if (!response.ok) {
         const payload = await response.json().catch(() => ({}))
         throw new Error(payload.error || '削除に失敗しました')

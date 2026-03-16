@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { apiFetch } from '../api'
 import Editor from '@monaco-editor/react'
 import { SourceSection } from '../types'
 import { FAMILY_META_MAP } from '../constants'
@@ -21,7 +22,7 @@ export function CodePanel({ sectionId, sections, onClose }: Props) {
     if (!sectionId) return
     setLoading(true)
     setCode('')
-    fetch(`/api/sections/${sectionId}/html`)
+    apiFetch(`/api/sections/${sectionId}/html`)
       .then(res => res.ok ? res.json() : Promise.reject())
       .then(data => setCode(data.html || data.sanitizedHtml || ''))
       .catch(() => setCode('<!-- コードの取得に失敗しました -->'))
