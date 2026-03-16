@@ -139,11 +139,82 @@ function requireApiKey(req: express.Request, res: express.Response, next: expres
 }
 
 // ============================================================
-// Security: Input sanitization
+// Security: Input sanitization & validation
 // ============================================================
 function sanitizeString(input: unknown, maxLen = 500): string {
   if (typeof input !== 'string') return ''
   return input.slice(0, maxLen).replace(/[<>]/g, '')
+}
+
+/** UUID v4 format check */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+function isValidUUID(value: unknown): value is string {
+  return typeof value === 'string' && UUID_RE.test(value)
+}
+
+/** Middleware: validate :id / :sectionId / :patchSetId / :siteId as UUID */
+function requireValidId(...paramNames: string[]) {
+  return (req: express.Request, res: express.Response, next: express.NextFunction) => {
+    for (const name of paramNames) {
+      const val = req.params[name]
+      if (val && !isValidUUID(val)) {
+        res.status(400).json({ error: `Invalid ${name} format` })
+        return
+      }
+    }
+    next()
+  }
+}
+
+/** SSRF prevention: block private/reserved IPs and localhost */
+function isUrlSafe(urlString: string): { safe: boolean; error?: string } {
+  let parsed: URL
+  try {
+    parsed = new URL(urlString)
+  } catch {
+    return { safe: false, error: 'Invalid URL format' }
+  }
+
+  // Only allow http/https
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return { safe: false, error: 'Only http/https protocols are allowed' }
+  }
+
+  const hostname = parsed.hostname.toLowerCase()
+
+  // Block localhost variants
+  if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' || hostname === '0.0.0.0') {
+    return { safe: false, error: 'Localhost URLs are not allowed' }
+  }
+
+  // Block private IP ranges
+  const ipv4Match = hostname.match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)$/)
+  if (ipv4Match) {
+    const [, a, b] = ipv4Match.map(Number)
+    if (a === 10) return { safe: false, error: 'Private IP addresses are not allowed' }
+    if (a === 172 && b >= 16 && b <= 31) return { safe: false, error: 'Private IP addresses are not allowed' }
+    if (a === 192 && b === 168) return { safe: false, error: 'Private IP addresses are not allowed' }
+    if (a === 169 && b === 254) return { safe: false, error: 'Link-local addresses are not allowed' }
+    if (a === 0) return { safe: false, error: 'Invalid IP address' }
+  }
+
+  // Block common internal hostnames
+  if (/\.(local|internal|intranet|corp|home|lan)$/i.test(hostname)) {
+    return { safe: false, error: 'Internal hostnames are not allowed' }
+  }
+
+  return { safe: true }
+}
+
+/** Path traversal prevention */
+function isSafeStoragePath(path: string): boolean {
+  if (!path || typeof path !== 'string') return false
+  // Block path traversal
+  if (path.includes('..') || path.startsWith('/') || path.includes('\0')) return false
+  // Block absolute Windows paths
+  if (/^[a-zA-Z]:/.test(path)) return false
+  return true
 }
 
 app.use(express.json({ limit: '1mb' }))
@@ -870,6 +941,13 @@ app.post('/api/extract', crawlLimiter, requireApiKey, async (req, res) => {
     return
   }
 
+  // SSRF prevention
+  const urlCheck = isUrlSafe(url)
+  if (!urlCheck.safe) {
+    res.status(400).json({ error: urlCheck.error })
+    return
+  }
+
   if (genre !== undefined && typeof genre !== 'string') {
     res.status(400).json({ error: 'genre must be a string' })
     return
@@ -880,6 +958,21 @@ app.post('/api/extract', crawlLimiter, requireApiKey, async (req, res) => {
       res.status(400).json({ error: 'tags must be an array of strings' })
       return
     }
+    // Limit tag count and length
+    if (tags.length > 20) {
+      res.status(400).json({ error: 'Maximum 20 tags allowed' })
+      return
+    }
+    if (tags.some((t: string) => t.length > 100)) {
+      res.status(400).json({ error: 'Each tag must be 100 characters or less' })
+      return
+    }
+  }
+
+  // Genre length limit
+  if (genre && genre.length > 100) {
+    res.status(400).json({ error: 'genre must be 100 characters or less' })
+    return
   }
 
   let parsedUrl: URL
@@ -903,7 +996,7 @@ app.post('/api/extract', crawlLimiter, requireApiKey, async (req, res) => {
 // ============================================================
 // Job status
 // ============================================================
-app.get('/api/jobs/:id', async (req, res) => {
+app.get('/api/jobs/:id', requireValidId('id'), async (req, res) => {
   const job = await getJobRecord(req.params.id)
   if (!job) {
     res.status(404).json({ error: 'Job not found' })
@@ -915,7 +1008,7 @@ app.get('/api/jobs/:id', async (req, res) => {
 // ============================================================
 // Get sections for a crawl run (with signed thumbnail URLs)
 // ============================================================
-app.get('/api/jobs/:id/sections', async (req, res) => {
+app.get('/api/jobs/:id/sections', requireValidId('id'), async (req, res) => {
   try {
     const record = await getJobSectionsRecord(req.params.id)
     if (!record) {
@@ -937,7 +1030,7 @@ app.get('/api/jobs/:id/sections', async (req, res) => {
 // ============================================================
 // Render: Serve section HTML + CSS bundle via <link>
 // ============================================================
-app.get('/api/sections/:sectionId/render', async (req, res) => {
+app.get('/api/sections/:sectionId/render', requireValidId('sectionId'), async (req, res) => {
   const { sectionId } = req.params
   try {
     const record = await getRenderContext(sectionId)
@@ -1106,7 +1199,7 @@ app.get('/api/block-variants', async (req, res) => {
 // ============================================================
 // Delete section from library
 // ============================================================
-app.delete('/api/library/:id', requireApiKey, async (req, res) => {
+app.delete('/api/library/:id', requireValidId('id'), requireApiKey, async (req, res) => {
   try {
     const section = await getSectionRecord(req.params.id)
     if (section && HAS_SUPABASE) {
@@ -1129,7 +1222,7 @@ app.delete('/api/library/:id', requireApiKey, async (req, res) => {
 // ============================================================
 // Source Edit: Get DOM nodes for a section
 // ============================================================
-app.get('/api/sections/:sectionId/dom', async (req, res) => {
+app.get('/api/sections/:sectionId/dom', requireValidId('sectionId'), async (req, res) => {
   const { sectionId } = req.params
   try {
     const record = await getDomRecord(sectionId)
@@ -1165,7 +1258,7 @@ async function getSectionRecord(sectionId: string) {
   return data
 }
 
-app.get('/api/sections/:sectionId/html', async (req, res) => {
+app.get('/api/sections/:sectionId/html', requireValidId('sectionId'), async (req, res) => {
   const { sectionId } = req.params
   try {
     const section = await getSectionRecord(sectionId)
@@ -1180,7 +1273,7 @@ app.get('/api/sections/:sectionId/html', async (req, res) => {
   }
 })
 
-app.put('/api/sections/:sectionId/html', async (req, res) => {
+app.put('/api/sections/:sectionId/html', requireValidId('sectionId'), requireApiKey, async (req, res) => {
   const { sectionId } = req.params
   const { html } = req.body
   if (typeof html !== 'string' || html.trim().length === 0) {
@@ -1217,7 +1310,7 @@ app.put('/api/sections/:sectionId/html', async (req, res) => {
 // ============================================================
 // Section: Delete
 // ============================================================
-app.delete('/api/sections/:sectionId', requireApiKey, async (req, res) => {
+app.delete('/api/sections/:sectionId', requireValidId('sectionId'), requireApiKey, async (req, res) => {
   const { sectionId } = req.params
   try {
     // Optionally clean up storage files
@@ -1242,7 +1335,7 @@ app.delete('/api/sections/:sectionId', requireApiKey, async (req, res) => {
 // ============================================================
 // Source Edit: Render resolved HTML (with data-pc-key attributes)
 // ============================================================
-app.get('/api/sections/:sectionId/editable-render', async (req, res) => {
+app.get('/api/sections/:sectionId/editable-render', requireValidId('sectionId'), async (req, res) => {
   const { sectionId } = req.params
   try {
     const record = await getRenderContext(sectionId)
@@ -1504,7 +1597,7 @@ app.get('/api/sections/:sectionId/editable-render', async (req, res) => {
 // ============================================================
 // Patch Sets: Create
 // ============================================================
-app.post('/api/sections/:sectionId/patch-sets', requireApiKey, async (req, res) => {
+app.post('/api/sections/:sectionId/patch-sets', requireValidId('sectionId'), requireApiKey, async (req, res) => {
   const { sectionId } = req.params
   const { projectId, label } = req.body
 
@@ -1532,7 +1625,7 @@ app.post('/api/sections/:sectionId/patch-sets', requireApiKey, async (req, res) 
 // ============================================================
 // Patch Sets: Add patches
 // ============================================================
-app.post('/api/patch-sets/:patchSetId/patches', requireApiKey, async (req, res) => {
+app.post('/api/patch-sets/:patchSetId/patches', requireValidId('patchSetId'), requireApiKey, async (req, res) => {
   const { patchSetId } = req.params
   const { patches } = req.body // Array of { nodeStableKey, op, payload }
 
@@ -1580,7 +1673,7 @@ app.post('/api/patch-sets/:patchSetId/patches', requireApiKey, async (req, res) 
 // ============================================================
 // Patch Sets: Get all patches for a set
 // ============================================================
-app.get('/api/patch-sets/:patchSetId', async (req, res) => {
+app.get('/api/patch-sets/:patchSetId', requireValidId('patchSetId'), async (req, res) => {
   const { patchSetId } = req.params
   try {
     const record = await getPatchSetRecord(patchSetId)
@@ -1597,7 +1690,7 @@ app.get('/api/patch-sets/:patchSetId', async (req, res) => {
 // ============================================================
 // Project Page Blocks: CRUD
 // ============================================================
-app.post('/api/projects/:projectId/page-blocks', requireApiKey, async (req, res) => {
+app.post('/api/projects/:projectId/page-blocks', requireValidId('projectId'), requireApiKey, async (req, res) => {
   const { projectId } = req.params
   const { pageId, sectionId, patchSetId, blockInstanceId, renderMode, position } = req.body
 
@@ -1681,7 +1774,7 @@ app.get('/api/projects', async (_req, res) => {
   }
 })
 
-app.get('/api/projects/:id', async (req, res) => {
+app.get('/api/projects/:id', requireValidId('id'), async (req, res) => {
   try {
     if (!HAS_SUPABASE) {
       const project = await getProject(req.params.id)
@@ -1707,7 +1800,7 @@ app.get('/api/projects/:id', async (req, res) => {
   }
 })
 
-app.put('/api/projects/:id', async (req, res) => {
+app.put('/api/projects/:id', requireValidId('id'), requireApiKey, async (req, res) => {
   const { name } = req.body
   try {
     if (!HAS_SUPABASE) {
@@ -1731,7 +1824,7 @@ app.put('/api/projects/:id', async (req, res) => {
   }
 })
 
-app.delete('/api/projects/:id', requireApiKey, async (req, res) => {
+app.delete('/api/projects/:id', requireValidId('id'), requireApiKey, async (req, res) => {
   try {
     if (!HAS_SUPABASE) {
       await deleteProject(req.params.id)
@@ -1758,7 +1851,7 @@ app.delete('/api/projects/:id', requireApiKey, async (req, res) => {
 // ============================================================
 // Canvas Save / Load
 // ============================================================
-app.post('/api/projects/:id/save-canvas', requireApiKey, async (req, res) => {
+app.post('/api/projects/:id/save-canvas', requireValidId('id'), requireApiKey, async (req, res) => {
   const { blocks } = req.body
   if (!Array.isArray(blocks)) {
     res.status(400).json({ error: 'blocks array is required' })
@@ -1809,7 +1902,7 @@ app.post('/api/projects/:id/save-canvas', requireApiKey, async (req, res) => {
   }
 })
 
-app.get('/api/projects/:id/load-canvas', async (req, res) => {
+app.get('/api/projects/:id/load-canvas', requireValidId('id'), async (req, res) => {
   try {
     if (!HAS_SUPABASE) {
       const result = await loadCanvasFromProject(req.params.id)
