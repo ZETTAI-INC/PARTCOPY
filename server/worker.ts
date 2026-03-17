@@ -321,20 +321,21 @@ async function markSiteAnalyzed(siteId: string) {
 async function processJob(job: any) {
   const site = job.source_sites
   const url = site.homepage_url
-  logger.info('Job started', { jobId: job.id, siteId: site.id, url, workerId: WORKER_ID })
+  const viewportMode: 'desktop' | 'mobile' = job.config_jsonb?.viewport === 'mobile' ? 'mobile' : 'desktop'
+  logger.info('Job started', { jobId: job.id, siteId: site.id, url, viewport: viewportMode, workerId: WORKER_ID })
 
-  await setCrawlRunStatus(job.id, { status: 'rendering', status_detail: 'ブラウザ起動中...' })
+  await setCrawlRunStatus(job.id, { status: 'rendering', status_detail: `ブラウザ起動中... (${viewportMode === 'mobile' ? 'モバイル' : 'デスクトップ'})` })
 
   const browser = await launchBrowser()
 
   try {
     const page = await browser.newPage()
 
-    // ========== Phase 1: Complete Site Download (2分タイムアウト) ==========
+    // ========== Phase 1: Complete Site Download (2分タイムアウト。分析フェーズは制限なし) ==========
     await setCrawlRunStatus(job.id, { status_detail: `${url} を取得中...` })
     logger.info('Phase 1: Downloading site', { jobId: job.id, url })
     const dl = await Promise.race([
-      downloadSite(page, url, site.id, job.id),
+      downloadSite(page, url, site.id, job.id, viewportMode),
       new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Download timed out after 120s')), 120_000))
     ])
     await setCrawlRunStatus(job.id, { status_detail: `ダウンロード完了 — HTML取得済 / CSS ${dl.cssFiles.length}件 / 画像 ${dl.imageFiles.length}件 / フォント ${dl.fontFiles.length}件` })
@@ -396,10 +397,7 @@ async function processJob(job: any) {
     // ========== Phase 3: Section Detection ==========
     await setCrawlRunStatus(job.id, { status: 'normalizing', status_detail: 'DOM解析中 — セクション境界を検出...' })
 
-    const sections = await Promise.race([
-      detectSections(page),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Section detection timed out after 45s')), 45000))
-    ])
+    const sections = await detectSections(page)
     await setCrawlRunStatus(job.id, { status_detail: `${sections.length}個のセクションを検出` })
     logger.info('Sections detected', { jobId: job.id, sectionCount: sections.length })
 

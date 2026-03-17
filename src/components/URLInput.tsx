@@ -18,7 +18,7 @@ function getActiveStep(status: string): number {
 }
 
 interface Props {
-  onSubmit: (url: string, genre: string, tags: string[], mode: 'own' | 'reference') => void
+  onSubmit: (url: string, genre: string, tags: string[], mode: 'own' | 'reference', viewport: 'desktop' | 'mobile') => void
   onCancel?: () => void
   loading: boolean
   error: string | null
@@ -31,6 +31,7 @@ export function URLInput({ onSubmit, onCancel, loading, error, jobStatus, jobId,
   const [cancelling, setCancelling] = useState(false)
   const [url, setUrl] = useState('')
   const [mode, setMode] = useState<'own' | 'reference'>('own')
+  const [viewport, setViewport] = useState<'desktop' | 'mobile'>('desktop')
   const [logs, setLogs] = useState<string[]>([])
   const [elapsed, setElapsed] = useState(0)
   const logRef = useRef<HTMLDivElement>(null)
@@ -41,9 +42,9 @@ export function URLInput({ onSubmit, onCancel, loading, error, jobStatus, jobId,
     if (!url.trim() || loading) return
     let finalUrl = url.trim()
     if (!/^https?:\/\//.test(finalUrl)) finalUrl = 'https://' + finalUrl
-    setLogs([`$ partcopy analyze ${finalUrl}`])
+    setLogs([`$ partcopy analyze ${finalUrl} --${viewport}`])
     setElapsed(0)
-    onSubmit(finalUrl, '', [], mode)
+    onSubmit(finalUrl, '', [], mode, viewport)
   }
 
   // Timer
@@ -126,6 +127,31 @@ export function URLInput({ onSubmit, onCancel, loading, error, jobStatus, jobId,
           </button>
           <button role="tab" aria-selected={mode === 'reference'} className={`mode-pill ${mode === 'reference' ? 'active' : ''}`} onClick={() => setMode('reference')}>
             参考パターン収集
+          </button>
+        </div>
+
+        <div className="url-viewport-toggle" role="radiogroup" aria-label="デバイス選択">
+          <button
+            type="button"
+            role="radio"
+            aria-checked={viewport === 'desktop'}
+            className={`viewport-pill ${viewport === 'desktop' ? 'active' : ''}`}
+            onClick={() => setViewport('desktop')}
+            disabled={loading}
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="1" y="2" width="14" height="9" rx="1" stroke="currentColor" strokeWidth="1.3"/><path d="M5 14h6M8 11v3" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round"/></svg>
+            デスクトップ
+          </button>
+          <button
+            type="button"
+            role="radio"
+            aria-checked={viewport === 'mobile'}
+            className={`viewport-pill ${viewport === 'mobile' ? 'active' : ''}`}
+            onClick={() => setViewport('mobile')}
+            disabled={loading}
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none"><rect x="4" y="1" width="8" height="14" rx="1.5" stroke="currentColor" strokeWidth="1.3"/><circle cx="8" cy="13" r="0.7" fill="currentColor"/></svg>
+            モバイル
           </button>
         </div>
 

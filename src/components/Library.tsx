@@ -37,25 +37,28 @@ export function Library({ onAddToCanvas }: Props) {
     return acc
   }, {})
 
-  const fetchMeta = useCallback(async () => {
+  const fetchGenres = useCallback(async () => {
     try {
-      const [genreResponse, familyResponse] = await Promise.all([
-        apiFetch('/api/library/genres'),
-        apiFetch('/api/library/families')
-      ])
-
-      if (!genreResponse.ok || !familyResponse.ok) {
-        throw new Error('ライブラリの集計情報を取得できませんでした')
-      }
-
+      const genreResponse = await apiFetch('/api/library/genres')
+      if (!genreResponse.ok) throw new Error('ジャンル情報を取得できませんでした')
       const genreData = await genreResponse.json()
-      const familyData = await familyResponse.json()
       setGenres(genreData.genres || [])
-      setFamilies(familyData.families || [])
     } catch (fetchError: any) {
-      setError(fetchError.message || 'ライブラリの集計情報を取得できませんでした')
+      setError(fetchError.message || 'ジャンル情報を取得できませんでした')
     }
   }, [])
+
+  const fetchFamilies = useCallback(async () => {
+    try {
+      const params = selectedGenre ? `?genre=${encodeURIComponent(selectedGenre)}` : ''
+      const familyResponse = await apiFetch(`/api/library/families${params}`)
+      if (!familyResponse.ok) throw new Error('ファミリー情報を取得できませんでした')
+      const familyData = await familyResponse.json()
+      setFamilies(familyData.families || [])
+    } catch (fetchError: any) {
+      setError(fetchError.message || 'ファミリー情報を取得できませんでした')
+    }
+  }, [selectedGenre])
 
   const fetchSections = useCallback(async () => {
     setLoading(true)
@@ -90,8 +93,12 @@ export function Library({ onAddToCanvas }: Props) {
   }, [limit, onlyCta, onlyForm, onlyImages, onlySubs, query, selectedFamily, selectedGenre, sortBy])
 
   useEffect(() => {
-    fetchMeta()
-  }, [fetchMeta])
+    fetchGenres()
+  }, [fetchGenres])
+
+  useEffect(() => {
+    fetchFamilies()
+  }, [fetchFamilies])
 
   useEffect(() => {
     fetchSections()
@@ -110,7 +117,8 @@ export function Library({ onAddToCanvas }: Props) {
       }
 
       setSections(prev => prev.filter(section => section.id !== id))
-      fetchMeta()
+      fetchGenres()
+      fetchFamilies()
     } catch (deleteError: any) {
       setError(deleteError.message || '削除に失敗しました')
     } finally {

@@ -35,6 +35,7 @@ interface CrawlRunRow extends JsonObject {
   error_message?: string | null
   page_count: number
   section_count: number
+  config_jsonb?: Record<string, any> | null
   queued_at: string
   started_at?: string | null
   finished_at?: string | null
@@ -467,13 +468,14 @@ export async function updateSourceSite(siteId: string, patch: Partial<SourceSite
   })
 }
 
-export async function createCrawlRun(input: { site_id: string; trigger_type?: string; status?: string }) {
+export async function createCrawlRun(input: { site_id: string; trigger_type?: string; status?: string; config_jsonb?: Record<string, any> | null }) {
   return withWriteLock(async db => {
     const job: CrawlRunRow = {
       id: randomUUID(),
       site_id: input.site_id,
       trigger_type: input.trigger_type || 'manual',
       status: input.status || 'queued',
+      config_jsonb: input.config_jsonb || null,
       page_count: 0,
       section_count: 0,
       queued_at: now(),
@@ -697,7 +699,13 @@ export async function listLibrarySections(filters: {
   const EXCLUDED_FAMILIES = new Set(['navigation', 'footer'])
   sections = sections.filter(section => !EXCLUDED_FAMILIES.has(section.block_family || ''))
 
-  if (filters.genre) sections = sections.filter(section => section.source_sites?.genre === filters.genre)
+  if (filters.genre) {
+    if (filters.genre === 'untagged') {
+      sections = sections.filter(section => !section.source_sites?.genre)
+    } else {
+      sections = sections.filter(section => section.source_sites?.genre === filters.genre)
+    }
+  }
   if (filters.family) sections = sections.filter(section => section.block_family === filters.family)
   if (filters.industry) sections = sections.filter(section => section.source_sites?.industry === filters.industry)
   if (filters.hasCta) sections = sections.filter(section => section.features_jsonb?.hasCTA || (section.features_jsonb?.buttonCount || 0) > 0)
@@ -790,11 +798,21 @@ export async function getGenreSummary() {
     .sort((a, b) => b.count - a.count)
 }
 
-export async function getFamilySummary() {
+export async function getFamilySummary(genreFilter?: string) {
   const db = await readDb()
   const EXCLUDED = new Set(['navigation', 'footer'])
+  const sitesById = genreFilter ? new Map(db.source_sites.map(s => [s.id, s])) : null
   const counts = db.source_sections.reduce<Record<string, number>>((acc, section) => {
     if (EXCLUDED.has(section.block_family || '')) return acc
+    if (sitesById) {
+      const site = sitesById.get(section.site_id)
+      const siteGenre = site?.genre || ''
+      if (genreFilter === 'untagged') {
+        if (siteGenre) return acc
+      } else if (siteGenre !== genreFilter) {
+        return acc
+      }
+    }
     const familyKey = section.block_family || 'content'
     acc[familyKey] = (acc[familyKey] || 0) + 1
     return acc

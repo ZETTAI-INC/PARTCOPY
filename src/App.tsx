@@ -191,7 +191,7 @@ export default function App() {
     }, 2000)
   }, [])
 
-  const handleExtract = useCallback(async (url: string, genre: string, tags: string[], mode: 'own' | 'reference') => {
+  const handleExtract = useCallback(async (url: string, genre: string, tags: string[], mode: 'own' | 'reference', viewport: 'desktop' | 'mobile' = 'desktop') => {
     setLoading(true)
     setError(null)
     setJobStatus('分析開始...')
@@ -199,7 +199,7 @@ export default function App() {
       const res = await apiFetch('/api/extract', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url, genre, tags })
+        body: JSON.stringify({ url, genre, tags, viewport })
       })
       if (!res.ok) {
         const data = await res.json()

@@ -368,7 +368,7 @@ async function readBucketText(bucket: string, storagePath?: string | null) {
   return file.text()
 }
 
-async function createExtractJobRecord(url: string, genre: string, tags: string[]) {
+async function createExtractJobRecord(url: string, genre: string, tags: string[], viewport?: 'desktop' | 'mobile') {
   const parsedUrl = new URL(url)
   const domain = parsedUrl.hostname.replace(/^www\./, '')
 
@@ -383,7 +383,8 @@ async function createExtractJobRecord(url: string, genre: string, tags: string[]
     const job = await createCrawlRun({
       site_id: site.id,
       trigger_type: 'manual',
-      status: 'queued'
+      status: 'queued',
+      config_jsonb: viewport ? { viewport } : null
     })
     return { site, job }
   }
@@ -404,15 +405,26 @@ async function createExtractJobRecord(url: string, genre: string, tags: string[]
     throw new Error(siteErr?.message || 'Failed to create site')
   }
 
-  const { data: job, error: jobErr } = await supabaseAdmin
-    .from('crawl_runs')
-    .insert({
-      site_id: site.id,
-      trigger_type: 'manual',
-      status: 'queued'
-    })
-    .select()
-    .single()
+  // config_jsonb: まずカラムありで試行、失敗したらカラムなしで再試行
+  let jobData: any = null
+  let jobErr: any = null
+  const jobBase = { site_id: site.id, trigger_type: 'manual', status: 'queued' }
+
+  if (viewport && viewport !== 'desktop') {
+    const res1 = await supabaseAdmin.from('crawl_runs').insert({ ...jobBase, config_jsonb: { viewport } }).select().single()
+    if (res1.error && /config_jsonb/i.test(res1.error.message)) {
+      // カラム未追加 — config_jsonb なしで再試行
+      logger.warn('config_jsonb column missing in Supabase, falling back to desktop viewport')
+      const res2 = await supabaseAdmin.from('crawl_runs').insert(jobBase).select().single()
+      jobData = res2.data; jobErr = res2.error
+    } else {
+      jobData = res1.data; jobErr = res1.error
+    }
+  } else {
+    const res = await supabaseAdmin.from('crawl_runs').insert(jobBase).select().single()
+    jobData = res.data; jobErr = res.error
+  }
+  const job = jobData
 
   if (jobErr || !job) {
     throw new Error(jobErr?.message || 'Failed to create job')
@@ -521,7 +533,13 @@ async function getLibraryResults(filters: {
     .select('*, source_sites!inner(normalized_domain, genre, tags, industry), source_pages(url, title)')
     .limit(Math.max(filters.limit * 3, 180))
 
-  if (filters.genre) query = query.eq('source_sites.genre', filters.genre)
+  if (filters.genre) {
+    if (filters.genre === 'untagged') {
+      query = query.or('genre.is.null,genre.eq.', { referencedTable: 'source_sites' })
+    } else {
+      query = query.eq('source_sites.genre', filters.genre)
+    }
+  }
   if (filters.family) query = query.eq('block_family', filters.family)
   if (filters.industry) query = query.eq('source_sites.industry', filters.industry)
 
@@ -633,9 +651,21 @@ async function getGenreResults() {
     .sort((a, b) => b.count - a.count)
 }
 
-async function getFamilyResults() {
+async function getFamilyResults(genreFilter?: string) {
   if (!HAS_SUPABASE) {
-    return getFamilySummary()
+    return getFamilySummary(genreFilter)
+  }
+
+  let sectionQuery = supabaseAdmin
+    .from('source_sections')
+    .select('block_family, source_sites!inner(genre)')
+
+  if (genreFilter) {
+    if (genreFilter === 'untagged') {
+      sectionQuery = sectionQuery.or('genre.is.null,genre.eq.', { referencedTable: 'source_sites' })
+    } else {
+      sectionQuery = sectionQuery.eq('source_sites.genre', genreFilter)
+    }
   }
 
   const [{ data: families, error }, { data: sections, error: countsError }] = await Promise.all([
@@ -643,9 +673,7 @@ async function getFamilyResults() {
       .from('block_families')
       .select('key, label, label_ja, sort_order')
       .order('sort_order'),
-    supabaseAdmin
-      .from('source_sections')
-      .select('block_family')
+    sectionQuery
   ])
 
   if (error || countsError) {
@@ -942,7 +970,7 @@ app.get('/api/storage/:bucket', async (req, res) => {
 // Extract: Create a crawl job
 // ============================================================
 app.post('/api/extract', crawlLimiter, requireApiKey, async (req, res) => {
-  const { url, genre, tags } = req.body
+  const { url, genre, tags, viewport } = req.body
   if (!url || typeof url !== 'string' || !/^https?:\/\/.+/.test(url)) {
     res.status(400).json({ error: 'Valid URL (http/https) is required' })
     return
@@ -991,7 +1019,8 @@ app.post('/api/extract', crawlLimiter, requireApiKey, async (req, res) => {
   }
 
   try {
-    const { site, job } = await createExtractJobRecord(url, genre || '', Array.isArray(tags) ? tags : [])
+    const vp = viewport === 'mobile' ? 'mobile' : 'desktop'
+    const { site, job } = await createExtractJobRecord(url, genre || '', Array.isArray(tags) ? tags : [], vp)
 
     res.json({ jobId: job.id, siteId: site.id, status: 'queued' })
   } catch (err: any) {
@@ -1171,7 +1200,8 @@ app.get('/api/library/genres', async (req, res) => {
 // ============================================================
 app.get('/api/library/families', async (req, res) => {
   try {
-    res.json({ families: await getFamilyResults() })
+    const genre = typeof req.query.genre === 'string' ? req.query.genre : undefined
+    res.json({ families: await getFamilyResults(genre) })
   } catch (err: any) {
     res.status(500).json({ error: err.message })
   }

@@ -219,19 +219,61 @@ function extractUrlsFromCSS(css: string, cssBaseUrl: string): string[] {
 /**
  * メイン: サイトを完全ダウンロードする
  */
+export interface ViewportConfig {
+  mode: 'desktop' | 'mobile'
+  width: number
+  height: number
+  userAgent: string
+  isMobile: boolean
+  hasTouch: boolean
+}
+
+export const VIEWPORT_PRESETS: Record<'desktop' | 'mobile', ViewportConfig> = {
+  desktop: {
+    mode: 'desktop',
+    width: 1440,
+    height: 900,
+    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    isMobile: false,
+    hasTouch: false,
+  },
+  mobile: {
+    mode: 'mobile',
+    width: 390,
+    height: 844,
+    userAgent: 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
+    isMobile: true,
+    hasTouch: true,
+  },
+}
+
 export async function downloadSite(
   page: Page,
   url: string,
   siteId: string,
-  jobId: string
+  jobId: string,
+  viewportMode: 'desktop' | 'mobile' = 'desktop'
 ): Promise<SiteDownloadResult> {
   const baseDir = `${siteId}/${jobId}`
   const bucket = STORAGE_BUCKETS.RAW_HTML
+  const vp = VIEWPORT_PRESETS[viewportMode]
 
   // Step 1: ページ取得（JS実行後）
-  await page.setViewport({ width: 1440, height: 900 })
-  await page.setUserAgent('Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
-  await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 })
+  await page.setViewport({ width: vp.width, height: vp.height, isMobile: vp.isMobile, hasTouch: vp.hasTouch })
+  await page.setUserAgent(vp.userAgent)
+  // 重いSPA対策: networkidle2で60秒待ち、失敗したらdomcontentloadedでフォールバック
+  try {
+    await page.goto(url, { waitUntil: 'networkidle2', timeout: 60000 })
+  } catch (navErr: any) {
+    if (/timeout/i.test(navErr.message)) {
+      logger.warn('networkidle2 timed out, retrying with domcontentloaded', { url })
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 })
+      // 追加で数秒待って非同期コンテンツの読み込みを許可
+      await new Promise(r => setTimeout(r, 5000))
+    } else {
+      throw navErr
+    }
+  }
 
   // Lazy-load scroll (timeout 30s to avoid hanging on infinite-scroll pages)
   await withTimeout(

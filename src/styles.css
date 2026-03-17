@@ -290,6 +290,51 @@ body {
   border-color: var(--border);
 }
 
+.url-viewport-toggle {
+  display: inline-flex;
+  gap: 4px;
+  padding: 3px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+
+.viewport-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 14px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  color: var(--text-muted);
+  transition: all 0.2s;
+  white-space: nowrap;
+}
+
+.viewport-pill.active {
+  background: var(--text);
+  color: var(--surface);
+  border-color: var(--text);
+}
+
+.viewport-pill:hover:not(.active):not(:disabled) {
+  color: var(--text);
+  border-color: var(--border);
+}
+
+.viewport-pill:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.viewport-pill svg {
+  flex-shrink: 0;
+}
+
 .url-form {
   display: flex;
   flex-direction: column;
