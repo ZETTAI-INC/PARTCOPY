@@ -479,10 +479,52 @@ body {
   flex: 1;
 }
 
+.terminal-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .terminal-timer {
   font-size: 11px;
   color: #58a6ff;
   font-variant-numeric: tabular-nums;
+}
+
+.terminal-timer.warning {
+  color: #d29922;
+  animation: pulse 1s ease-in-out infinite;
+}
+
+.terminal-cancel-btn {
+  font-size: 10px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  border: 1px solid #da3633;
+  background: transparent;
+  color: #da3633;
+  cursor: pointer;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  transition: background 0.2s, color 0.2s;
+}
+
+.terminal-cancel-btn:hover {
+  background: #da3633;
+  color: #fff;
+}
+
+.terminal-cancel-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.terminal-warning {
+  padding: 6px 16px;
+  font-size: 11px;
+  color: #d29922;
+  background: rgba(210, 153, 34, 0.1);
+  border-top: 1px solid rgba(210, 153, 34, 0.2);
+  font-family: 'SF Mono', 'Fira Code', monospace;
 }
 
 .terminal-body {
@@ -523,12 +565,53 @@ body {
   50% { opacity: 0; }
 }
 
+.terminal-progress-section {
+  border-top: 1px solid #21262d;
+  background: #0d1117;
+}
+
+.terminal-progress-bar {
+  height: 3px;
+  background: #21262d;
+  overflow: hidden;
+}
+
+.terminal-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #58a6ff, #3fb950);
+  transition: width 0.6s ease;
+  position: relative;
+}
+
+.terminal-progress-fill::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.3), transparent);
+  animation: progressShimmer 1.5s ease-in-out infinite;
+}
+
+.terminal-progress-fill.complete {
+  background: #3fb950;
+  transition: width 0.3s ease, background 0.3s ease;
+}
+
+.terminal-progress-fill.complete::after {
+  animation: none;
+}
+
+@keyframes progressShimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+
 .terminal-steps {
   display: flex;
   padding: 10px 16px;
   gap: 4px;
-  border-top: 1px solid #21262d;
-  background: #0d1117;
 }
 
 .terminal-step {
@@ -536,6 +619,7 @@ body {
   display: flex;
   align-items: center;
   gap: 6px;
+  transition: opacity 0.3s ease;
 }
 
 .terminal-step-indicator {
@@ -546,14 +630,22 @@ body {
   justify-content: center;
   flex-shrink: 0;
   color: #484f58;
+  transition: color 0.3s ease, transform 0.3s ease;
 }
 
 .terminal-step.done .terminal-step-indicator {
   color: #3fb950;
+  animation: stepComplete 0.4s ease;
 }
 
 .terminal-step.active .terminal-step-indicator {
   color: #58a6ff;
+}
+
+@keyframes stepComplete {
+  0% { transform: scale(0.5); opacity: 0; }
+  50% { transform: scale(1.3); }
+  100% { transform: scale(1); opacity: 1; }
 }
 
 .terminal-step-pulse {
@@ -562,6 +654,7 @@ body {
   border-radius: 50%;
   background: #58a6ff;
   animation: pulse 1s ease-in-out infinite;
+  box-shadow: 0 0 6px rgba(88, 166, 255, 0.5);
 }
 
 .terminal-step-empty {
@@ -575,6 +668,7 @@ body {
   font-size: 10px;
   color: #484f58;
   font-family: 'SF Mono', 'Fira Code', monospace;
+  transition: color 0.3s ease;
 }
 
 .terminal-step.active .terminal-step-label {

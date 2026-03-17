@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react'
+import { apiFetch } from '../api'
 
 const ANALYSIS_STEPS = [
   { key: 'fetch',    cmd: 'fetch --headless',       label: 'ページ取得' },
@@ -18,12 +19,15 @@ function getActiveStep(status: string): number {
 
 interface Props {
   onSubmit: (url: string, genre: string, tags: string[], mode: 'own' | 'reference') => void
+  onCancel?: () => void
   loading: boolean
   error: string | null
   jobStatus: string | null
+  jobId?: string | null
 }
 
-export function URLInput({ onSubmit, loading, error, jobStatus }: Props) {
+export function URLInput({ onSubmit, onCancel, loading, error, jobStatus, jobId }: Props) {
+  const [cancelling, setCancelling] = useState(false)
   const [url, setUrl] = useState('')
   const [mode, setMode] = useState<'own' | 'reference'>('own')
   const [logs, setLogs] = useState<string[]>([])
@@ -82,7 +86,22 @@ export function URLInput({ onSubmit, loading, error, jobStatus }: Props) {
     if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight
   }, [logs])
 
+  const handleCancel = async () => {
+    if (!jobId || cancelling) return
+    setCancelling(true)
+    try {
+      await apiFetch(`/api/jobs/${jobId}/cancel`, { method: 'POST' })
+      setLogs(prev => [...prev, '  cancelled by user'])
+      onCancel?.()
+    } catch {} finally {
+      setCancelling(false)
+    }
+  }
+
   const activeStep = jobStatus ? getActiveStep(jobStatus) : -1
+  const progressPercent = loading
+    ? Math.min(((activeStep + 1) / ANALYSIS_STEPS.length) * 100, 95)
+    : logs.length > 1 && !error ? 100 : 0
 
   return (
     <div className="url-input-bar">
@@ -127,7 +146,14 @@ export function URLInput({ onSubmit, loading, error, jobStatus }: Props) {
                 <span className="terminal-dot green" />
               </div>
               <span className="terminal-title">partcopy analyze</span>
-              {loading && <span className="terminal-timer">{elapsed}s</span>}
+              {loading && (
+                <div className="terminal-header-right">
+                  <span className={`terminal-timer ${elapsed > 60 ? 'warning' : ''}`}>{elapsed}s</span>
+                  <button className="terminal-cancel-btn" onClick={handleCancel} disabled={cancelling}>
+                    {cancelling ? '...' : '中断'}
+                  </button>
+                </div>
+              )}
             </div>
             <div className="terminal-body" ref={logRef}>
               {logs.map((line, i) => (
@@ -137,22 +163,39 @@ export function URLInput({ onSubmit, loading, error, jobStatus }: Props) {
                 </div>
               ))}
             </div>
-            {loading && (
-              <div className="terminal-steps">
-                {ANALYSIS_STEPS.map((s, i) => (
-                  <div key={s.key} className={`terminal-step ${i < activeStep ? 'done' : i === activeStep ? 'active' : ''}`}>
-                    <span className="terminal-step-indicator">
-                      {i < activeStep ? (
-                        <svg width="10" height="10" viewBox="0 0 12 12" fill="none"><path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
-                      ) : i === activeStep ? (
-                        <span className="terminal-step-pulse" />
-                      ) : (
-                        <span className="terminal-step-empty" />
-                      )}
-                    </span>
-                    <span className="terminal-step-label">{s.label}</span>
-                  </div>
-                ))}
+            {loading && elapsed > 60 && (
+              <div className="terminal-warning">
+                処理に時間がかかっています。サイトが重い場合は「中断」して別のURLを試してください。
+              </div>
+            )}
+            {(loading || (logs.length > 1 && !error)) && (
+              <div className="terminal-progress-section">
+                <div className="terminal-progress-bar">
+                  <div
+                    className={`terminal-progress-fill ${!loading && progressPercent === 100 ? 'complete' : ''}`}
+                    style={{ width: `${progressPercent}%` }}
+                  />
+                </div>
+                <div className="terminal-steps">
+                  {ANALYSIS_STEPS.map((s, i) => {
+                    const isDone = loading ? i < activeStep : !error && logs.length > 1
+                    const isActive = loading && i === activeStep
+                    return (
+                      <div key={s.key} className={`terminal-step ${isDone ? 'done' : isActive ? 'active' : ''}`}>
+                        <span className="terminal-step-indicator">
+                          {isDone ? (
+                            <svg width="10" height="10" viewBox="0 0 12 12" fill="none"><path d="M2.5 6L5 8.5L9.5 3.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/></svg>
+                          ) : isActive ? (
+                            <span className="terminal-step-pulse" />
+                          ) : (
+                            <span className="terminal-step-empty" />
+                          )}
+                        </span>
+                        <span className="terminal-step-label">{s.label}</span>
+                      </div>
+                    )
+                  })}
+                </div>
               </div>
             )}
           </div>

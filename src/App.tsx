@@ -37,6 +37,7 @@ export default function App() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [jobStatus, setJobStatus] = useState<string | null>(null)
+  const [jobId, setJobId] = useState<string | null>(null)
   const [view, setView] = useState<View>('editor')
   const [dismissedWarnings, setDismissedWarnings] = useState<Set<string>>(new Set())
   const pollRef = useRef<NodeJS.Timeout | null>(null)
@@ -201,15 +202,24 @@ export default function App() {
         const data = await res.json()
         throw new Error(data.error || 'Failed to create job')
       }
-      const { jobId } = await res.json()
+      const { jobId: newJobId } = await res.json()
+      setJobId(newJobId)
       setJobStatus('分析キュー待ち...')
-      pollJob(jobId)
+      pollJob(newJobId)
     } catch (err: any) {
       setError(err.message)
       setLoading(false)
       setJobStatus(null)
+      setJobId(null)
     }
   }, [pollJob])
+
+  const handleCancelJob = useCallback(() => {
+    stopPolling()
+    setLoading(false)
+    setJobStatus(null)
+    setJobId(null)
+  }, [])
 
   const addToCanvas = useCallback((sectionId: string) => {
     setCanvas(prev => {
@@ -321,7 +331,7 @@ export default function App() {
       )}
 
       {view !== 'library' && (
-        <URLInput onSubmit={handleExtract} loading={loading} error={error} jobStatus={jobStatus} />
+        <URLInput onSubmit={handleExtract} onCancel={handleCancelJob} loading={loading} error={error} jobStatus={jobStatus} jobId={jobId} />
       )}
 
       {view === 'editor' && (

@@ -330,9 +330,12 @@ async function processJob(job: any) {
   try {
     const page = await browser.newPage()
 
-    // ========== Phase 1: Complete Site Download ==========
+    // ========== Phase 1: Complete Site Download (2分タイムアウト) ==========
     logger.info('Phase 1: Downloading site', { jobId: job.id, url })
-    const dl = await downloadSite(page, url, site.id, job.id)
+    const dl = await Promise.race([
+      downloadSite(page, url, site.id, job.id),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Download timed out after 120s')), 120_000))
+    ])
     logger.info('Download complete', { jobId: job.id, title: dl.title, cssCount: dl.cssFiles.length, imageCount: dl.imageFiles.length, fontCount: dl.fontFiles.length })
 
     // ========== Phase 2: Store page-level data ==========

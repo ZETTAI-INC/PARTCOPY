@@ -1010,6 +1010,32 @@ app.get('/api/jobs/:id', requireValidId('id'), async (req, res) => {
 })
 
 // ============================================================
+// Cancel a running job
+// ============================================================
+app.post('/api/jobs/:id/cancel', requireValidId('id'), async (req, res) => {
+  try {
+    const job = await getJobRecord(req.params.id)
+    if (!job) { res.status(404).json({ error: 'Job not found' }); return }
+    if (job.status === 'done' || job.status === 'failed') {
+      res.json({ job, message: 'Job already finished' })
+      return
+    }
+
+    if (HAS_SUPABASE) {
+      await supabaseAdmin
+        .from('crawl_runs')
+        .update({ status: 'failed', error_message: 'Cancelled by user', finished_at: new Date().toISOString() })
+        .eq('id', req.params.id)
+    }
+
+    const updated = await getJobRecord(req.params.id)
+    res.json({ job: updated, message: 'Job cancelled' })
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ============================================================
 // Get sections for a crawl run (with signed thumbnail URLs)
 // ============================================================
 app.get('/api/jobs/:id/sections', requireValidId('id'), async (req, res) => {
