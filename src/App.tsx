@@ -38,6 +38,7 @@ export default function App() {
   const [error, setError] = useState<string | null>(null)
   const [jobStatus, setJobStatus] = useState<string | null>(null)
   const [jobId, setJobId] = useState<string | null>(null)
+  const [jobDetail, setJobDetail] = useState<string>('')
   const [view, setView] = useState<View>('editor')
   const [dismissedWarnings, setDismissedWarnings] = useState<Set<string>>(new Set())
   const pollRef = useRef<NodeJS.Timeout | null>(null)
@@ -156,8 +157,10 @@ export default function App() {
           normalizing: 'AIで分類・品質判定中...',
         }
         const label = STATUS_LABELS[job.status] || job.status
+        const detail = (job as any).status_detail || ''
         const sectionInfo = job.section_count ? `${job.section_count} パーツ検出` : ''
         setJobStatus(`${label}${sectionInfo ? ` / ${sectionInfo}` : ''}`)
+        setJobDetail(detail)
 
         if (job.status === 'done') {
           stopPolling()
@@ -331,7 +334,7 @@ export default function App() {
       )}
 
       {view !== 'library' && (
-        <URLInput onSubmit={handleExtract} onCancel={handleCancelJob} loading={loading} error={error} jobStatus={jobStatus} jobId={jobId} />
+        <URLInput onSubmit={handleExtract} onCancel={handleCancelJob} loading={loading} error={error} jobStatus={jobStatus} jobId={jobId} jobDetail={jobDetail} />
       )}
 
       {view === 'editor' && (

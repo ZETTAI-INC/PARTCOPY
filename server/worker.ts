@@ -323,7 +323,7 @@ async function processJob(job: any) {
   const url = site.homepage_url
   logger.info('Job started', { jobId: job.id, siteId: site.id, url, workerId: WORKER_ID })
 
-  await setCrawlRunStatus(job.id, { status: 'rendering' })
+  await setCrawlRunStatus(job.id, { status: 'rendering', status_detail: 'ブラウザ起動中...' })
 
   const browser = await launchBrowser()
 
@@ -331,15 +331,17 @@ async function processJob(job: any) {
     const page = await browser.newPage()
 
     // ========== Phase 1: Complete Site Download (2分タイムアウト) ==========
+    await setCrawlRunStatus(job.id, { status_detail: `${url} を取得中...` })
     logger.info('Phase 1: Downloading site', { jobId: job.id, url })
     const dl = await Promise.race([
       downloadSite(page, url, site.id, job.id),
       new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Download timed out after 120s')), 120_000))
     ])
+    await setCrawlRunStatus(job.id, { status_detail: `ダウンロード完了 — HTML取得済 / CSS ${dl.cssFiles.length}件 / 画像 ${dl.imageFiles.length}件 / フォント ${dl.fontFiles.length}件` })
     logger.info('Download complete', { jobId: job.id, title: dl.title, cssCount: dl.cssFiles.length, imageCount: dl.imageFiles.length, fontCount: dl.fontFiles.length })
 
     // ========== Phase 2: Store page-level data ==========
-    await setCrawlRunStatus(job.id, { status: 'parsed' })
+    await setCrawlRunStatus(job.id, { status: 'parsed', status_detail: 'ページデータをストレージに保存中...' })
 
     // Upload rewritten HTML
     const finalHtmlPath = `${site.id}/${job.id}/final.html`
@@ -392,12 +394,13 @@ async function processJob(job: any) {
     await storePageAssets(assetRecords)
 
     // ========== Phase 3: Section Detection ==========
-    await setCrawlRunStatus(job.id, { status: 'normalizing' })
+    await setCrawlRunStatus(job.id, { status: 'normalizing', status_detail: 'DOM解析中 — セクション境界を検出...' })
 
     const sections = await Promise.race([
       detectSections(page),
       new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Section detection timed out after 45s')), 45000))
     ])
+    await setCrawlRunStatus(job.id, { status_detail: `${sections.length}個のセクションを検出` })
     logger.info('Sections detected', { jobId: job.id, sectionCount: sections.length })
 
     // Build URL rewrite map for section HTML
@@ -446,6 +449,7 @@ async function processJob(job: any) {
     })
 
     // AI Classification (batch)
+    await setCrawlRunStatus(job.id, { status_detail: `${candidates.length}セクションをフィルタ通過 → AI分類開始...` })
     logger.info('AI classifying sections', { jobId: job.id, count: candidates.length })
     const aiResults = await classifySectionsWithAI(
       candidates.map(s => ({
@@ -459,9 +463,15 @@ async function processJob(job: any) {
       }))
     )
 
+    await setCrawlRunStatus(job.id, { status_detail: `AI分類完了 → ${candidates.length}セクションを保存中...` })
+
     for (let i = 0; i < candidates.length; i++) {
       const section = candidates[i]
       const aiClass = aiResults[i]
+
+      if (i % 3 === 0) {
+        await setCrawlRunStatus(job.id, { status_detail: `セクション保存中 ${i + 1}/${candidates.length} — ${aiClass.type}`, section_count: sectionCount })
+      }
 
       logger.debug('Processing section', {
         jobId: job.id, sectionIndex: section.index,
@@ -615,6 +625,7 @@ async function processJob(job: any) {
     // ========== Phase 5: Mark complete ==========
     await setCrawlRunStatus(job.id, {
       status: 'done',
+      status_detail: `完了 — ${sectionCount}セクション保存済み`,
       page_count: 1,
       section_count: sectionCount,
       finished_at: new Date().toISOString()

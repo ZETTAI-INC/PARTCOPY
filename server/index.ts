@@ -266,6 +266,9 @@ const buildRenderDocument = (
   // 元サイトのCSPメタタグを除去（iframe内で外部リソースをブロックしないため）
   storedHtml = storedHtml.replace(/<meta[^>]*http-equiv\s*=\s*["']?Content-Security-Policy["']?[^>]*>/gi, '')
 
+  // プレビュー用: scriptタグを除去（jQuery未定義エラー等を防止）
+  storedHtml = storedHtml.replace(/<script\b[^<]*(?:(?!<\/script>)<[^<]*)*<\/script>/gi, '')
+
   if (/<html[\s>]/i.test(storedHtml)) {
     let html = storedHtml
 

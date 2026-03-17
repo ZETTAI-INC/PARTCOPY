@@ -24,9 +24,10 @@ interface Props {
   error: string | null
   jobStatus: string | null
   jobId?: string | null
+  jobDetail?: string
 }
 
-export function URLInput({ onSubmit, onCancel, loading, error, jobStatus, jobId }: Props) {
+export function URLInput({ onSubmit, onCancel, loading, error, jobStatus, jobId, jobDetail }: Props) {
   const [cancelling, setCancelling] = useState(false)
   const [url, setUrl] = useState('')
   const [mode, setMode] = useState<'own' | 'reference'>('own')
@@ -69,6 +70,19 @@ export function URLInput({ onSubmit, onCancel, loading, error, jobStatus, jobId 
       return [...prev, line]
     })
   }, [jobStatus])
+
+  // Add detail log lines
+  useEffect(() => {
+    if (!jobDetail) return
+    const line = `    → ${jobDetail}`
+    setLogs(prev => {
+      // Replace last detail line if it starts with →, otherwise add
+      if (prev.length > 0 && prev[prev.length - 1]?.trimStart().startsWith('→')) {
+        return [...prev.slice(0, -1), line]
+      }
+      return [...prev, line]
+    })
+  }, [jobDetail])
 
   // Done
   useEffect(() => {
