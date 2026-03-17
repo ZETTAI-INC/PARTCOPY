@@ -14,7 +14,17 @@ export default defineConfig({
       ignored: ['**/.partcopy/**']
     },
     proxy: {
-      '/api': `http://localhost:${apiPort}`,
+      '/api': {
+        target: `http://localhost:${apiPort}`,
+        changeOrigin: true,
+        configure: (proxy) => {
+          // CSP等のヘッダーをそのまま透過させる
+          proxy.on('proxyRes', (proxyRes) => {
+            delete proxyRes.headers['content-security-policy']
+            delete proxyRes.headers['content-security-policy-report-only']
+          })
+        }
+      },
       '/assets': `http://localhost:${apiPort}`
     }
   }

@@ -1,4 +1,4 @@
-import Anthropic from '@anthropic-ai/sdk'
+import { claudeGenerate } from './claude-cli.js'
 import { logger } from './logger.js'
 
 export interface OptimizeConfig {
@@ -115,11 +115,6 @@ export async function generateFromBlueprint(
   sections: Array<{ id: string; family: string; html: string; sourceUrl?: string }>,
   config: OptimizeConfig
 ): Promise<OptimizeResult> {
-  const apiKey = process.env.ANTHROPIC_API_KEY
-  if (!apiKey) throw new Error('ANTHROPIC_API_KEY is not set')
-
-  const client = new Anthropic({ apiKey })
-
   // 元のHTMLコードは送らない — 構造情報だけを抽出して送る
   const blueprints = sections.map((s, i) => {
     const blueprint = extractLayoutBlueprint(s.html, s.family)
@@ -147,28 +142,18 @@ ${blueprints}
 - 元サイトのコード・デザインをコピーせず、同じ「構成パターン」で新しくデザインしてください
 - プロダクション品質の美しいページを生成してください`
 
-  logger.info('Claude generate: calling API', {
+  logger.info('Claude generate: calling CLI', {
     sectionCount: sections.length,
     inputChars: userPrompt.length
   })
 
-  const response = await client.messages.create({
-    model: 'claude-sonnet-4-20250514',
-    max_tokens: 16000,
-    system: SYSTEM_PROMPT,
-    messages: [{ role: 'user', content: userPrompt }]
+  const text = await claudeGenerate(userPrompt, {
+    systemPrompt: SYSTEM_PROMPT,
+    timeout: 180_000 // 3 min for large generations
   })
 
-  const text = response.content
-    .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-    .map(b => b.text)
-    .join('')
-
   logger.info('Claude generate: response received', {
-    outputChars: text.length,
-    inputTokens: response.usage.input_tokens,
-    outputTokens: response.usage.output_tokens,
-    cost: `$${((response.usage.input_tokens * 3 + response.usage.output_tokens * 15) / 1_000_000).toFixed(4)}`
+    outputChars: text.length
   })
 
   // Extract HTML from markdown fences

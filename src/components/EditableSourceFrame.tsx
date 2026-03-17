@@ -169,7 +169,6 @@ export function EditableSourceFrame({ sectionId, maxHeight, onNodeSelect, onInli
             transformOrigin: 'top left',
             display: loading ? 'none' : 'block'
           }}
-          sandbox="allow-same-origin allow-scripts"
         />
       )}
     </div>

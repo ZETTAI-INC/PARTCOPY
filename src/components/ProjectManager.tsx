@@ -16,6 +16,8 @@ export function ProjectManager({ canvas, setCanvas, setSections, onSwitchToEdito
   const [saving, setSaving] = useState<string | null>(null)
   const [loadingProject, setLoadingProject] = useState<string | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
+  const [creating, setCreating] = useState(false)
+  const [deletingId, setDeletingId] = useState<string | null>(null)
 
   const fetchProjects = useCallback(async () => {
     try {
@@ -34,6 +36,7 @@ export function ProjectManager({ canvas, setCanvas, setSections, onSwitchToEdito
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!newName.trim()) return
+    setCreating(true)
     try {
       const res = await apiFetch('/api/projects', {
         method: 'POST',
@@ -45,6 +48,8 @@ export function ProjectManager({ canvas, setCanvas, setSections, onSwitchToEdito
       fetchProjects()
     } catch {
       // ignore
+    } finally {
+      setCreating(false)
     }
   }
 
@@ -99,12 +104,15 @@ export function ProjectManager({ canvas, setCanvas, setSections, onSwitchToEdito
   }
 
   const handleDelete = async (projectId: string) => {
+    setDeletingId(projectId)
     try {
       await apiFetch(`/api/projects/${projectId}`, { method: 'DELETE' })
       setConfirmDelete(null)
       fetchProjects()
     } catch {
       // ignore
+    } finally {
+      setDeletingId(null)
     }
   }
 
@@ -124,8 +132,8 @@ export function ProjectManager({ canvas, setCanvas, setSections, onSwitchToEdito
               value={newName}
               onChange={e => setNewName(e.target.value)}
             />
-            <button type="submit" className="project-create-btn" disabled={!newName.trim()}>
-              作成
+            <button type="submit" className="project-create-btn" disabled={!newName.trim() || creating}>
+              {creating ? <span className="spinner" /> : '作成'}
             </button>
           </form>
         </div>
@@ -177,19 +185,19 @@ export function ProjectManager({ canvas, setCanvas, setSections, onSwitchToEdito
                     onClick={() => handleSave(project.id)}
                     disabled={saving === project.id || canvas.length === 0}
                   >
-                    {saving === project.id ? '保存中...' : 'Canvas を保存'}
+                    {saving === project.id ? <span className="spinner" /> : 'Canvas を保存'}
                   </button>
                   <button
                     className="pj-btn pj-btn-secondary"
                     onClick={() => handleLoad(project.id)}
                     disabled={loadingProject === project.id}
                   >
-                    {loadingProject === project.id ? '読込中...' : '読み込む'}
+                    {loadingProject === project.id ? <span className="spinner" /> : '読み込む'}
                   </button>
                   {confirmDelete === project.id ? (
                     <span className="project-confirm-delete">
-                      <button className="pj-btn pj-btn-danger" onClick={() => handleDelete(project.id)}>
-                        削除する
+                      <button className="pj-btn pj-btn-danger" onClick={() => handleDelete(project.id)} disabled={deletingId === project.id}>
+                        {deletingId === project.id ? <span className="spinner" /> : '削除する'}
                       </button>
                       <button className="pj-btn pj-btn-ghost" onClick={() => setConfirmDelete(null)}>
                         キャンセル

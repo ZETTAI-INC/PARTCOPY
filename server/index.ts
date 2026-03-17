@@ -33,8 +33,10 @@ import {
   listLibrarySections,
   listProjectPages,
   listProjects,
+  loadCanvasAutosave,
   loadCanvasFromProject,
   readStoredText,
+  saveCanvasAutosave,
   saveCanvasToProject,
   updateProject,
   upsertSourceSite
@@ -49,23 +51,9 @@ const app = express()
 // Security: Helmet headers
 // ============================================================
 app.use(helmet({
-  contentSecurityPolicy: {
-    directives: {
-      defaultSrc: ["'self'"],
-      scriptSrc: ["'self'", "'unsafe-inline'"],
-      styleSrc: ["'self'", "'unsafe-inline'", "https:", "http:"],  // 外部サイトのCSS
-      fontSrc: ["'self'", "https:", "http:", "data:", "blob:"],    // 外部フォント
-      imgSrc: ["'self'", "data:", "blob:", "https:", "http:"],     // 外部画像
-      connectSrc: ["'self'"],
-      frameSrc: ["'self'"],
-      frameAncestors: ["'self'"],  // 自サイトiframeのみ許可
-      objectSrc: ["'none'"],
-      baseUri: ["'self'"],
-      formAction: ["'self'"]
-    }
-  },
+  contentSecurityPolicy: false,  // CSP無効化 — iframe内で外部リソースを自由に読み込むため
   crossOriginEmbedderPolicy: false,
-  crossOriginResourcePolicy: { policy: 'cross-origin' }  // iframe内リソース読み込み用
+  crossOriginResourcePolicy: { policy: 'cross-origin' }
 }))
 
 // ============================================================
@@ -98,7 +86,7 @@ const globalLimiter = rateLimit({
 
 const crawlLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,  // 1時間
-  max: 10,                     // 1時間あたり10クロール
+  max: 30,                     // 1時間あたり30クロール
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Crawl rate limit exceeded. Try again later.' }
@@ -255,6 +243,7 @@ const buildRenderDocument = (
 ) => {
   const headParts = [
     '<meta charset="utf-8">',
+    '<meta http-equiv="Content-Security-Policy" content="default-src * \'unsafe-inline\' \'unsafe-eval\' data: blob:; img-src * data: blob:; media-src * data: blob:; frame-src *;">',
     '<meta name="viewport" content="width=device-width,initial-scale=1">',
     options?.skipBase ? '' : `<base href="${pageOrigin}/">`,
     options?.cssBundle ? `<style>${options.cssBundle}</style>` : '',
@@ -262,6 +251,9 @@ const buildRenderDocument = (
   ].filter(Boolean)
 
   const injection = headParts.join('')
+
+  // 元サイトのCSPメタタグを除去（iframe内で外部リソースをブロックしないため）
+  storedHtml = storedHtml.replace(/<meta[^>]*http-equiv\s*=\s*["']?Content-Security-Policy["']?[^>]*>/gi, '')
 
   if (/<html[\s>]/i.test(storedHtml)) {
     let html = storedHtml
@@ -1067,8 +1059,7 @@ app.get('/api/sections/:sectionId/render', requireValidId('sectionId'), async (r
 
     const html = buildRenderDocument(storedHtml, pageOrigin, { extraHead: cssLink, skipBase: true })
 
-    // iframe内で外部リソースを読み込むためCSP解除
-    res.removeHeader('Content-Security-Policy')
+    // helmetバイパス済み — CSPなしで返す
     res.setHeader('Content-Type', 'text/html; charset=utf-8')
     res.setHeader('Cache-Control', 'no-cache')
     res.send(html)
@@ -1546,6 +1537,119 @@ app.get('/api/sections/:sectionId/editable-render', requireValidId('sectionId'),
     if (!currentEditing) hideTooltip();
   });
 
+  // ---------- Element-level D&D ----------
+  var dragMode = false;
+  var dropIndicator = null;
+
+  function createDropIndicator() {
+    if (dropIndicator) return dropIndicator;
+    dropIndicator = document.createElement('div');
+    dropIndicator.className = 'pc-drop-indicator';
+    document.body.appendChild(dropIndicator);
+    return dropIndicator;
+  }
+
+  function hideDropIndicator() {
+    if (dropIndicator) dropIndicator.style.display = 'none';
+  }
+
+  function enableDragMode() {
+    dragMode = true;
+    document.querySelectorAll('[data-pc-key]').forEach(function(el) {
+      if (el.tagName === 'BODY' || el.tagName === 'HTML') return;
+      el.setAttribute('draggable', 'true');
+    });
+    document.body.classList.add('pc-drag-mode');
+  }
+
+  function disableDragMode() {
+    dragMode = false;
+    document.querySelectorAll('[draggable="true"]').forEach(function(el) {
+      el.removeAttribute('draggable');
+    });
+    document.body.classList.remove('pc-drag-mode');
+    hideDropIndicator();
+  }
+
+  document.addEventListener('dragstart', function(e) {
+    if (!dragMode) return;
+    var target = findPcNode(e.target);
+    if (!target || !target.dataset.pcKey) { e.preventDefault(); return; }
+    e.dataTransfer.setData('application/partcopy-element', JSON.stringify({
+      stableKey: target.dataset.pcKey,
+      html: target.outerHTML,
+      tagName: target.tagName.toLowerCase()
+    }));
+    e.dataTransfer.effectAllowed = 'copyMove';
+    target.style.opacity = '0.4';
+    window.parent.postMessage({
+      type: 'pc:element-drag-start',
+      stableKey: target.dataset.pcKey,
+      html: target.outerHTML,
+      tagName: target.tagName.toLowerCase()
+    }, '*');
+  });
+
+  document.addEventListener('dragend', function(e) {
+    var target = findPcNode(e.target);
+    if (target) target.style.opacity = '';
+    hideDropIndicator();
+    window.parent.postMessage({ type: 'pc:element-drag-end' }, '*');
+  });
+
+  document.addEventListener('dragover', function(e) {
+    if (!dragMode) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    var target = findPcNode(e.target);
+    if (!target || !target.dataset.pcKey) { hideDropIndicator(); return; }
+    var r = target.getBoundingClientRect();
+    var midY = r.top + r.height / 2;
+    var indicator = createDropIndicator();
+    var insertBefore = e.clientY < midY;
+    indicator.style.display = 'block';
+    indicator.style.left = r.left + 'px';
+    indicator.style.width = r.width + 'px';
+    indicator.style.top = (insertBefore ? r.top + window.scrollY - 2 : r.bottom + window.scrollY - 2) + 'px';
+    indicator.dataset.targetKey = target.dataset.pcKey;
+    indicator.dataset.position = insertBefore ? 'before' : 'after';
+  });
+
+  document.addEventListener('drop', function(e) {
+    e.preventDefault();
+    var rawData = e.dataTransfer.getData('application/partcopy-element');
+    if (!rawData) return;
+    var data = JSON.parse(rawData);
+    var target = findPcNode(e.target);
+    if (!target || !target.dataset.pcKey) return;
+    var r = target.getBoundingClientRect();
+    var insertBefore = e.clientY < (r.top + r.height / 2);
+    var position = insertBefore ? 'before' : 'after';
+
+    // Insert element into DOM
+    var temp = document.createElement('div');
+    temp.innerHTML = data.html;
+    var newEl = temp.firstElementChild;
+    if (!newEl) return;
+
+    if (position === 'before') {
+      target.parentNode.insertBefore(newEl, target);
+    } else {
+      target.parentNode.insertBefore(newEl, target.nextSibling);
+    }
+
+    hideDropIndicator();
+
+    // Notify parent
+    window.parent.postMessage({
+      type: 'pc:element-dropped',
+      sourceKey: data.stableKey,
+      targetKey: target.dataset.pcKey,
+      position: position,
+      html: data.html
+    }, '*');
+  });
+
   // ---------- Patch from parent (NodeInspector) ----------
   window.addEventListener('message', function(e) {
     if (!e.data) return;
@@ -1560,7 +1664,17 @@ app.get('/api/sections/:sectionId/editable-render', requireValidId('sectionId'),
           if (el.tagName === 'IMG') { el.src = patch.payload.src; if (patch.payload.alt) el.alt = patch.payload.alt; }
           break;
         case 'set_style_token': el.style.setProperty(patch.payload.property, patch.payload.value); break;
+        case 'set_class':
+          if (patch.payload.add) patch.payload.add.forEach(function(c) { el.classList.add(c); });
+          if (patch.payload.remove) patch.payload.remove.forEach(function(c) { el.classList.remove(c); });
+          break;
         case 'remove_node': el.remove(); break;
+        case 'insert_after':
+          var tmp = document.createElement('div');
+          tmp.innerHTML = patch.payload.html;
+          var ins = tmp.firstElementChild;
+          if (ins) el.parentNode.insertBefore(ins, el.nextSibling);
+          break;
       }
       window.parent.postMessage({ type: 'pc:patch-applied', stableKey: patch.nodeStableKey }, '*');
     }
@@ -1568,6 +1682,12 @@ app.get('/api/sections/:sectionId/editable-render', requireValidId('sectionId'),
       clearSelection();
       var sel = document.querySelector('[data-pc-key="' + e.data.stableKey + '"]');
       if (sel) sel.setAttribute('data-pc-selected', '');
+    }
+    if (e.data.type === 'pc:enable-drag-mode') {
+      enableDragMode();
+    }
+    if (e.data.type === 'pc:disable-drag-mode') {
+      disableDragMode();
     }
   });
 })();
@@ -1586,12 +1706,15 @@ app.get('/api/sections/:sectionId/editable-render', requireValidId('sectionId'),
   .pc-img-overlay { position: absolute; z-index: 99998; background: rgba(59,130,246,0.15); border: 2px solid #3b82f6; border-radius: 4px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
   .pc-img-overlay-content { background: #3b82f6; color: #fff; padding: 8px 16px; border-radius: 6px; font-size: 13px; font-family: -apple-system, sans-serif; font-weight: 600; box-shadow: 0 2px 8px rgba(0,0,0,0.2); }
   .pc-img-overlay-content:hover { background: #2563eb; }
+  .pc-drag-mode [data-pc-key] { cursor: grab !important; }
+  .pc-drag-mode [data-pc-key]:hover { outline: 2px dashed #8b5cf6 !important; outline-offset: 2px; }
+  .pc-drag-mode [data-pc-key][draggable="true"]:active { cursor: grabbing !important; }
+  .pc-drop-indicator { position: absolute; z-index: 99999; height: 4px; background: #8b5cf6; border-radius: 2px; pointer-events: none; display: none; box-shadow: 0 0 8px rgba(139,92,246,0.5); }
 </style>`,
       extraBodyEnd: editorScript
     })
 
-    // iframe内で外部リソースを読み込むためCSP解除
-    res.removeHeader('Content-Security-Policy')
+    // helmetバイパス済み — CSPなしで返す
     res.setHeader('Content-Type', 'text/html; charset=utf-8')
     res.send(html)
   } catch (err: any) {
@@ -1949,6 +2072,39 @@ app.get('/api/projects/:id/load-canvas', requireValidId('id'), async (req, res) 
 })
 
 // ============================================================
+// Canvas Autosave (standalone, not tied to a project)
+// ============================================================
+app.put('/api/canvas/autosave', requireApiKey, async (req, res) => {
+  const { blocks } = req.body
+  if (!Array.isArray(blocks)) {
+    res.status(400).json({ error: 'blocks array is required' })
+    return
+  }
+  try {
+    if (!HAS_SUPABASE) {
+      await saveCanvasAutosave(blocks)
+      res.json({ ok: true })
+      return
+    }
+    // Supabase: store in a settings-like table or use local fallback
+    // For simplicity, use local store even when Supabase is available
+    await saveCanvasAutosave(blocks)
+    res.json({ ok: true })
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+app.get('/api/canvas/autosave', requireApiKey, async (_req, res) => {
+  try {
+    const result = await loadCanvasAutosave()
+    res.json(result)
+  } catch (err: any) {
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ============================================================
 // AI Optimize
 // ============================================================
 import { generateFromBlueprint } from './ai-optimizer.js'
@@ -1963,11 +2119,6 @@ app.post('/api/canvas/optimize', aiLimiter, requireApiKey, async (req, res) => {
     res.status(400).json({ error: 'Maximum 10 sections allowed' })
     return
   }
-  if (!process.env.ANTHROPIC_API_KEY) {
-    res.status(500).json({ error: 'ANTHROPIC_API_KEY is not configured' })
-    return
-  }
-
   const serverOrigin = `http://${req.headers.host || `127.0.0.1:${PORT}`}`
 
   try {

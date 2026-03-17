@@ -97,9 +97,11 @@ export function Library({ onAddToCanvas }: Props) {
     fetchSections()
   }, [fetchSections])
 
+  const [deletingId, setDeletingId] = useState<string | null>(null)
+
   const handleDelete = async (id: string) => {
     setError(null)
-
+    setDeletingId(id)
     try {
       const response = await apiFetch(`/api/library/${id}`, { method: 'DELETE' })
       if (!response.ok) {
@@ -111,6 +113,8 @@ export function Library({ onAddToCanvas }: Props) {
       fetchMeta()
     } catch (deleteError: any) {
       setError(deleteError.message || '削除に失敗しました')
+    } finally {
+      setDeletingId(null)
     }
   }
 
@@ -327,7 +331,9 @@ export function Library({ onAddToCanvas }: Props) {
                 {hoveredId === section.id && (
                   <div className="part-overlay-actions">
                     <button className="add-btn-large" onClick={() => onAddToCanvas(section)}>+ 追加</button>
-                    <button className="remove-btn-small" onClick={() => handleDelete(section.id)}>削除</button>
+                    <button className="remove-btn-small" onClick={() => handleDelete(section.id)} disabled={deletingId === section.id}>
+                      {deletingId === section.id ? <span className="spinner" /> : '削除'}
+                    </button>
                   </div>
                 )}
               </div>

@@ -27,8 +27,14 @@ export function Canvas({ items, onRemove, onMove, onAddToCanvas }: Props) {
   const [editingIndex, setEditingIndex] = useState<number | null>(null)
   const [codeEditingIndex, setCodeEditingIndex] = useState<number | null>(null)
   const [selectedNode, setSelectedNode] = useState<SelectedNode | null>(null)
+  const [elementDragMode, setElementDragMode] = useState(false)
+  const [showThemePanel, setShowThemePanel] = useState(false)
+  const [themeColor, setThemeColor] = useState('#2563eb')
+  const [themeFont, setThemeFont] = useState("'Noto Sans JP', sans-serif")
+  const [themeBg, setThemeBg] = useState('#ffffff')
   const iframeRefs = useRef<Map<number, HTMLIFrameElement>>(new Map())
   const [refreshKeys, setRefreshKeys] = useState<Record<number, number>>({})
+  const [applying, setApplying] = useState(false)
 
   const isExternalDrag = (e: React.DragEvent) =>
     e.dataTransfer.types.includes('application/partcopy-section')
@@ -108,6 +114,127 @@ export function Canvas({ items, onRemove, onMove, onAddToCanvas }: Props) {
       iframe.contentWindow.postMessage({ type: 'pc:apply-patch', patch }, window.location.origin)
     }
   }, [editingIndex])
+
+  // Toggle element-level drag mode in all editing iframes
+  const toggleElementDragMode = useCallback(() => {
+    setElementDragMode(prev => {
+      const newMode = !prev
+      iframeRefs.current.forEach((iframe) => {
+        iframe.contentWindow?.postMessage(
+          { type: newMode ? 'pc:enable-drag-mode' : 'pc:disable-drag-mode' },
+          window.location.origin
+        )
+      })
+      return newMode
+    })
+  }, [])
+
+  // Apply theme to all sections via style patches
+  const applyTheme = useCallback(async () => {
+    setApplying(true)
+    try {
+    for (const item of items) {
+      try {
+        const res = await apiFetch(`/api/sections/${item.section.id}/dom`)
+        const data = await res.json()
+        const nodes = data.nodes || []
+
+        const patchSetRes = await apiFetch(`/api/sections/${item.section.id}/patch-sets`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ label: 'Theme apply' })
+        })
+        const patchSetData = await patchSetRes.json()
+        const patchSetId = patchSetData.patchSet?.id
+        if (!patchSetId) continue
+
+        const patches: Array<{ nodeStableKey: string; op: string; payload: Record<string, any> }> = []
+
+        for (const node of nodes) {
+          if (!node.editable) continue
+          const tag = node.tag_name?.toLowerCase()
+
+          // Heading & button colors
+          if (['h1', 'h2', 'h3', 'h4', 'h5', 'h6'].includes(tag) || tag === 'button' || tag === 'a') {
+            if (tag === 'button' || (tag === 'a' && node.node_type === 'button')) {
+              patches.push({ nodeStableKey: node.stable_key, op: 'set_style_token', payload: { property: 'background-color', value: themeColor } })
+              patches.push({ nodeStableKey: node.stable_key, op: 'set_style_token', payload: { property: 'color', value: '#ffffff' } })
+            } else {
+              patches.push({ nodeStableKey: node.stable_key, op: 'set_style_token', payload: { property: 'color', value: themeColor } })
+            }
+          }
+
+          // Font family to all text
+          if (['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'span', 'li', 'a', 'button'].includes(tag)) {
+            patches.push({ nodeStableKey: node.stable_key, op: 'set_style_token', payload: { property: 'font-family', value: themeFont } })
+          }
+        }
+
+        // Apply background to root section
+        const root = nodes.find((n: any) => n.stable_key?.startsWith('s') && !n.stable_key.includes('.'))
+        if (root) {
+          patches.push({ nodeStableKey: root.stable_key, op: 'set_style_token', payload: { property: 'background-color', value: themeBg } })
+        }
+
+        if (patches.length > 0) {
+          await apiFetch(`/api/patch-sets/${patchSetId}/patches`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ patches })
+          })
+        }
+      } catch {}
+    }
+
+    // Refresh all iframes
+    setRefreshKeys(prev => {
+      const next = { ...prev }
+      items.forEach((_, i) => { next[i] = (next[i] || 0) + 1 })
+      return next
+    })
+    setShowThemePanel(false)
+    } finally {
+      setApplying(false)
+    }
+  }, [items, themeColor, themeFont, themeBg])
+
+  // Handle element drop between sections
+  const handleElementDrop = useCallback((e: MessageEvent) => {
+    if (!e.data || e.data.type !== 'pc:element-dropped') return
+    const { targetKey, position, html } = e.data
+    if (editingIndex === null) return
+    const item = items[editingIndex]
+    if (!item) return
+    // Save as insert_after/insert_before patch
+    apiFetch(`/api/sections/${item.section.id}/patch-sets`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ label: 'Element D&D' })
+    })
+      .then(r => r.json())
+      .then(data => {
+        const patchSetId = data.patchSet?.id
+        if (!patchSetId) return
+        return apiFetch(`/api/patch-sets/${patchSetId}/patches`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            patches: [{
+              nodeStableKey: targetKey,
+              op: 'insert_after',
+              payload: { html, position }
+            }]
+          })
+        })
+      })
+      .catch(() => {})
+  }, [editingIndex, items])
+
+  // Listen for element drag messages from iframes
+  React.useEffect(() => {
+    window.addEventListener('message', handleElementDrop)
+    return () => window.removeEventListener('message', handleElementDrop)
+  }, [handleElementDrop])
 
   // Inline edit from iframe (auto-apply, no button needed)
   const handleInlineEdit = useCallback((stableKey: string, op: string, payload: Record<string, any>) => {
@@ -218,12 +345,57 @@ export function Canvas({ items, onRemove, onMove, onAddToCanvas }: Props) {
       <main className="canvas">
         <div className="canvas-header">
           <h2>ページビルダー <span className="canvas-block-count">{items.length} ブロック</span></h2>
-          {editingIndex !== null && (
-            <button className="inspector-btn" onClick={() => { setEditingIndex(null); setSelectedNode(null) }}>
-              編集を閉じる
+          <div className="canvas-header-actions">
+            <button
+              className={`theme-toggle-btn ${showThemePanel ? 'active' : ''}`}
+              onClick={() => setShowThemePanel(!showThemePanel)}
+              title="テーマ設定"
+            >
+              テーマ
             </button>
-          )}
+            {editingIndex !== null && (
+              <>
+                <button
+                  className={`element-drag-btn ${elementDragMode ? 'active' : ''}`}
+                  onClick={toggleElementDragMode}
+                  title={elementDragMode ? '要素ドラッグ: ON' : '要素ドラッグ: OFF'}
+                >
+                  {elementDragMode ? '要素D&D ON' : '要素D&D'}
+                </button>
+                <button className="inspector-btn" onClick={() => { setEditingIndex(null); setSelectedNode(null); setElementDragMode(false) }}>
+                  編集を閉じる
+                </button>
+              </>
+            )}
+          </div>
         </div>
+        {showThemePanel && (
+          <div className="theme-panel">
+            <div className="theme-row">
+              <label>メインカラー</label>
+              <input type="color" value={themeColor} onChange={e => setThemeColor(e.target.value)} />
+              <input type="text" value={themeColor} onChange={e => setThemeColor(e.target.value)} className="theme-text-input" />
+            </div>
+            <div className="theme-row">
+              <label>背景色</label>
+              <input type="color" value={themeBg} onChange={e => setThemeBg(e.target.value)} />
+              <input type="text" value={themeBg} onChange={e => setThemeBg(e.target.value)} className="theme-text-input" />
+            </div>
+            <div className="theme-row">
+              <label>フォント</label>
+              <select value={themeFont} onChange={e => setThemeFont(e.target.value)} className="theme-select">
+                <option value="'Noto Sans JP', sans-serif">Noto Sans JP</option>
+                <option value="'Inter', sans-serif">Inter</option>
+                <option value="'Helvetica Neue', sans-serif">Helvetica</option>
+                <option value="'Georgia', serif">Georgia (Serif)</option>
+                <option value="'M PLUS 1p', sans-serif">M PLUS 1p</option>
+              </select>
+            </div>
+            <button className="theme-apply-btn" onClick={applyTheme} disabled={applying}>
+              {applying ? <span className="spinner" /> : '全セクションに適用'}
+            </button>
+          </div>
+        )}
         <div className="canvas-blocks">
           {renderInserter(0)}
           {items.map((item, i) => {

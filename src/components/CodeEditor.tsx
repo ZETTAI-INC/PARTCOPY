@@ -132,7 +132,7 @@ export function CodeEditor({ sectionId, onClose, onSaved }: Props) {
               onClick={handleSave}
               disabled={!dirty || saving}
             >
-              {saving ? '保存中...' : '保存 (Cmd+S)'}
+              {saving ? <span className="spinner" /> : '保存 (Cmd+S)'}
             </button>
             <button className="code-editor-btn close" onClick={handleClose}>
               &times;

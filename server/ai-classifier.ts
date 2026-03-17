@@ -1,8 +1,8 @@
 /**
- * AI-powered Section Classifier using Claude Haiku.
- * Falls back to heuristic classifier if API key is not set.
+ * AI-powered Section Classifier using Claude Code CLI.
+ * Falls back to heuristic classifier if CLI is not available.
  */
-import Anthropic from '@anthropic-ai/sdk'
+import { claudeGenerateJSON } from './claude-cli.js'
 import { classifySection, type RawSection } from './classifier.js'
 
 const FAMILY_TYPES = [
@@ -36,7 +36,7 @@ interface AIClassification {
 }
 
 /**
- * Classify a batch of sections using Claude Haiku.
+ * Classify a batch of sections using Claude Code CLI.
  * Returns array of classifications in the same order as input.
  */
 type SectionInput = { index: number; textContent: string; features: Record<string, any>; classTokens: string[]; tagName: string; boundingBox: { height: number; width: number }; outerHTMLSnippet?: string }
@@ -46,31 +46,21 @@ const BATCH_SIZE = 15
 export async function classifySectionsWithAI(
   sections: SectionInput[]
 ): Promise<AIClassification[]> {
-  const apiKey = process.env.ANTHROPIC_API_KEY
-  if (!apiKey || sections.length === 0) {
-    return sections.map(() => ({
-      type: 'content',
-      variant: '',
-      confidence: 0.3,
-      quality_score: 0.3,
-      reason: 'No API key'
-    }))
+  if (sections.length === 0) {
+    return []
   }
-
-  const client = new Anthropic({ apiKey })
 
   // Split into batches to avoid exceeding token limits
   const results: AIClassification[] = []
   for (let start = 0; start < sections.length; start += BATCH_SIZE) {
     const batch = sections.slice(start, start + BATCH_SIZE)
-    const batchResults = await classifyBatch(client, batch)
+    const batchResults = await classifyBatch(batch)
     results.push(...batchResults)
   }
   return results
 }
 
 async function classifyBatch(
-  client: Anthropic,
   sections: SectionInput[]
 ): Promise<AIClassification[]> {
   const sectionDescriptions = sections.map((s, i) => {
@@ -128,22 +118,9 @@ JSON配列のみ返してください（説明文不要）。セクション数:
 ${sectionDescriptions}`
 
   try {
-    const response = await client.messages.create({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 4096,
-      messages: [{ role: 'user', content: prompt }]
+    const parsed = await claudeGenerateJSON<AIClassification[]>(prompt, {
+      timeout: 120_000
     })
-
-    const text = response.content
-      .filter((b): b is Anthropic.TextBlock => b.type === 'text')
-      .map(b => b.text)
-      .join('')
-
-    // Extract JSON array from response
-    const jsonMatch = text.match(/\[[\s\S]*\]/)
-    if (!jsonMatch) throw new Error('No JSON array in response')
-
-    const parsed: AIClassification[] = JSON.parse(jsonMatch[0])
 
     // Validate and pad if needed
     return sections.map((_, i) => {

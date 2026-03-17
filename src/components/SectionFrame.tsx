@@ -88,7 +88,6 @@ export function SectionFrame({ htmlUrl, maxHeight, scale }: Props) {
           pointerEvents: 'none',
           display: 'block'
         }}
-        sandbox="allow-same-origin"
         loading="lazy"
       />
     </div>

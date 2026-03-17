@@ -177,6 +177,7 @@ interface LocalDB {
   projects: ProjectRow[]
   project_pages: ProjectPageRow[]
   exports: ExportRow[]
+  canvas_autosave?: { blocks: Array<{ id: string; sectionId: string; position: number }>; updated_at: string } | null
 }
 
 const FAMILY_SEEDS = [
@@ -1238,4 +1239,21 @@ export async function updateExport(id: string, patch: Partial<ExportRow>) {
     row.updated_at = now()
     return clone(row)
   })
+}
+
+// ============================================================
+// Canvas autosave (standalone, not tied to a project)
+// ============================================================
+
+export async function saveCanvasAutosave(blocks: Array<{ id: string; sectionId: string; position: number }>) {
+  return withWriteLock(async db => {
+    db.canvas_autosave = { blocks, updated_at: now() }
+    return true
+  })
+}
+
+export async function loadCanvasAutosave() {
+  const db = await readDb()
+  if (!db.canvas_autosave) return { blocks: [] }
+  return clone(db.canvas_autosave)
 }

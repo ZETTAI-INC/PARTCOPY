@@ -22,6 +22,8 @@ export function PartsPanel({ sections, onAdd, onRemove }: Props) {
   const [onlyForm, setOnlyForm] = useState(false)
   const [onlyImages, setOnlyImages] = useState(false)
   const [codeViewId, setCodeViewId] = useState<string | null>(null)
+  const [addingId, setAddingId] = useState<string | null>(null)
+  const [removingId, setRemovingId] = useState<string | null>(null)
 
   const familyCounts = sections.reduce<Record<string, number>>((acc, section) => {
     const family = section.block_family || 'content'
@@ -185,8 +187,26 @@ export function PartsPanel({ sections, onAdd, onRemove }: Props) {
               </button>
               {hoveredId === section.id && (
                 <div className="part-overlay-actions">
-                  <button className="add-btn-large" onClick={() => onAdd(section.id)}>+ 追加</button>
-                  <button className="remove-btn-small" onClick={() => onRemove(section.id)}>削除</button>
+                  <button
+                    className="add-btn-large"
+                    disabled={addingId === section.id}
+                    onClick={async () => {
+                      setAddingId(section.id)
+                      try { await onAdd(section.id) } finally { setAddingId(null) }
+                    }}
+                  >
+                    {addingId === section.id ? <span className="spinner" /> : '+ 追加'}
+                  </button>
+                  <button
+                    className="remove-btn-small"
+                    disabled={removingId === section.id}
+                    onClick={async () => {
+                      setRemovingId(section.id)
+                      try { await onRemove(section.id) } finally { setRemovingId(null) }
+                    }}
+                  >
+                    {removingId === section.id ? <span className="spinner" /> : '削除'}
+                  </button>
                 </div>
               )}
             </div>

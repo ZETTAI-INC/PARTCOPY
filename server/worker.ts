@@ -521,7 +521,7 @@ async function processJob(job: any) {
         thumbnail_storage_path: thumbnailPath,
         block_family: classification.type,
         block_variant: aiClass.variant || canonical?.variant,
-        classifier_type: process.env.ANTHROPIC_API_KEY ? 'ai' : 'heuristic',
+        classifier_type: 'ai',
         classifier_confidence: classification.confidence,
         features_jsonb: section.features,
         text_summary: section.textContent.slice(0, 500),

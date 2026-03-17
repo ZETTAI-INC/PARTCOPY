@@ -41,25 +41,45 @@ export default function App() {
   const [dismissedWarnings, setDismissedWarnings] = useState<Set<string>>(new Set())
   const pollRef = useRef<NodeJS.Timeout | null>(null)
 
-  // Persist canvas to localStorage (debounced to avoid excessive writes)
+  // Persist canvas to localStorage + server (debounced)
   useEffect(() => {
     const timer = setTimeout(() => {
       localStorage.setItem(CANVAS_STORAGE_KEY, JSON.stringify({ version: CANVAS_STORAGE_VERSION, canvas }))
-    }, 300)
+      // サーバーにも自動バックアップ
+      apiFetch('/api/canvas/autosave', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ blocks: canvas })
+      }).catch(() => {}) // サーバー保存失敗は無視（localStorageがフォールバック）
+    }, 500)
     return () => clearTimeout(timer)
   }, [canvas])
 
-  // Restore sections for canvas items on mount, removing nav/footer
+  // Restore canvas: try server first, then localStorage fallback
   useEffect(() => {
-    const stored = loadCanvasFromStorage()
-    if (stored.length === 0) return
-    const sectionIds = [...new Set(stored.map(c => c.sectionId))]
-    apiFetch(`/api/library?limit=200`)
-      .then(r => r.json())
-      .then(data => {
-        const libSections: SourceSection[] = data.sections || []
+    async function restoreCanvas() {
+      // サーバーからCanvas復元を試行
+      let stored = loadCanvasFromStorage()
+      try {
+        const res = await apiFetch('/api/canvas/autosave')
+        if (res.ok) {
+          const data = await res.json()
+          if (Array.isArray(data.blocks) && data.blocks.length > 0) {
+            stored = data.blocks
+            setCanvas(stored)
+          }
+        }
+      } catch {
+        // サーバー不通ならlocalStorageのまま
+      }
+
+      if (stored.length === 0) return
+      const sectionIds = [...new Set(stored.map(c => c.sectionId))]
+      try {
+        const libRes = await apiFetch(`/api/library?limit=200`)
+        const libData = await libRes.json()
+        const libSections: SourceSection[] = libData.sections || []
         const libMap = new Map(libSections.map((s: SourceSection) => [s.id, s]))
-        // Clean canvas: remove blocks whose sections are nav/footer or no longer in library
         const validIds = new Set(libSections.map(s => s.id))
         setCanvas(prev => {
           const cleaned = prev.filter(c => validIds.has(c.sectionId))
@@ -75,8 +95,9 @@ export default function App() {
           }
           return next
         })
-      })
-      .catch(() => {})
+      } catch {}
+    }
+    restoreCanvas()
   }, [])
 
   const sourceCount = new Set(

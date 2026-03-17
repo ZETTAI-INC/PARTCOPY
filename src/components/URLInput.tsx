@@ -4,7 +4,7 @@ const ANALYSIS_STEPS = [
   { key: 'fetch',    cmd: 'fetch --headless',       label: 'ページ取得' },
   { key: 'render',   cmd: 'render --javascript',    label: 'レンダリング' },
   { key: 'detect',   cmd: 'detect --sections',      label: 'セクション検出' },
-  { key: 'classify', cmd: 'classify --ai haiku',    label: 'AI分類' },
+  { key: 'classify', cmd: 'classify --ai claude',    label: 'AI分類' },
   { key: 'store',    cmd: 'store --deduplicate',    label: '保存' },
 ]
 
