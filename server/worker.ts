@@ -523,7 +523,12 @@ async function processJob(job: any) {
         block_variant: aiClass.variant || canonical?.variant,
         classifier_type: 'ai',
         classifier_confidence: classification.confidence,
-        features_jsonb: section.features,
+        features_jsonb: {
+          ...section.features,
+          hasImages: (section.features.imageCount || 0) > 0,
+          hasCTA: (section.features.buttonCount || 0) > 0,
+          hasForm: (section.features.formCount || 0) > 0,
+        },
         text_summary: section.textContent.slice(0, 500),
         layout_signature: layoutSig,
         image_count: section.features.imageCount,

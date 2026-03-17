@@ -700,9 +700,9 @@ export async function listLibrarySections(filters: {
   if (filters.genre) sections = sections.filter(section => section.source_sites?.genre === filters.genre)
   if (filters.family) sections = sections.filter(section => section.block_family === filters.family)
   if (filters.industry) sections = sections.filter(section => section.source_sites?.industry === filters.industry)
-  if (filters.hasCta) sections = sections.filter(section => section.features_jsonb?.hasCTA)
-  if (filters.hasForm) sections = sections.filter(section => section.features_jsonb?.hasForm)
-  if (filters.hasImages) sections = sections.filter(section => section.features_jsonb?.hasImages)
+  if (filters.hasCta) sections = sections.filter(section => section.features_jsonb?.hasCTA || (section.features_jsonb?.buttonCount || 0) > 0)
+  if (filters.hasForm) sections = sections.filter(section => section.features_jsonb?.hasForm || (section.features_jsonb?.formCount || 0) > 0)
+  if (filters.hasImages) sections = sections.filter(section => section.features_jsonb?.hasImages || (section.features_jsonb?.imageCount || 0) > 0)
 
   if (searchTerm) {
     sections = sections.filter(section => {

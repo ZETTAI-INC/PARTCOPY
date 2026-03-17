@@ -236,6 +236,17 @@ app.get('/api/health', async (_req, res) => {
   res.status(allOk ? 200 : 503).json({ status: allOk ? 'healthy' : 'degraded', checks })
 })
 
+// features_jsonb の数値カウントから boolean フラグを導出
+function deriveFeatureFlags(features: Record<string, any> | null | undefined): Record<string, any> {
+  if (!features) return {}
+  return {
+    ...features,
+    hasImages: (features.imageCount || 0) > 0,
+    hasCTA: (features.buttonCount || 0) > 0,
+    hasForm: (features.formCount || 0) > 0,
+  }
+}
+
 const buildRenderDocument = (
   storedHtml: string,
   pageOrigin: string,
@@ -520,7 +531,7 @@ async function getLibraryResults(filters: {
   const searchTerm = normalizeSearchValue(filters.q)
   let results = (data || []).filter((section: any) => {
     if (EXCLUDED_FAMILIES.has(section.block_family)) return false
-    const featureFlags = section.features_jsonb || {}
+    const featureFlags = deriveFeatureFlags(section.features_jsonb)
 
     if (filters.hasCta && !featureFlags.hasCTA) return false
     if (filters.hasForm && !featureFlags.hasForm) return false
@@ -1011,6 +1022,7 @@ app.get('/api/jobs/:id/sections', requireValidId('id'), async (req, res) => {
 
     const sections = (record.sections || []).map((section: any) => ({
       ...section,
+      features_jsonb: deriveFeatureFlags(section.features_jsonb),
       htmlUrl: (section.sanitized_html_storage_path || section.raw_html_storage_path) ? `/api/sections/${section.id}/render` : null
     }))
 
@@ -1105,6 +1117,7 @@ app.get('/api/library', async (req, res) => {
     res.json({
       sections: results.map((section: any) => ({
         ...section,
+        features_jsonb: deriveFeatureFlags(section.features_jsonb),
         htmlUrl: (section.sanitized_html_storage_path || section.raw_html_storage_path) ? `/api/sections/${section.id}/render` : null
       }))
     })
@@ -2062,6 +2075,7 @@ app.get('/api/projects/:id/load-canvas', requireValidId('id'), async (req, res) 
         .in('id', sectionIds)
       sections = (data || []).map((s: any) => ({
         ...s,
+        features_jsonb: deriveFeatureFlags(s.features_jsonb),
         htmlUrl: (s.sanitized_html_storage_path || s.raw_html_storage_path) ? `/api/sections/${s.id}/render` : null
       }))
     }
@@ -2310,6 +2324,49 @@ ${htmlParts.join('\n')}
     res.send(exportHtml)
   } catch (err: any) {
     logger.error('Export failed', { error: err.message })
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ============================================================
+// Admin: Backfill features_jsonb boolean flags for existing sections
+// ============================================================
+app.post('/api/admin/backfill-features', requireApiKey, async (_req, res) => {
+  try {
+    if (!HAS_SUPABASE) {
+      res.json({ message: 'Not supported without Supabase', updated: 0 })
+      return
+    }
+
+    const { data, error } = await supabaseAdmin
+      .from('source_sections')
+      .select('id, features_jsonb')
+
+    if (error) throw new Error(error.message)
+
+    let updated = 0
+    for (const row of (data || [])) {
+      const f = row.features_jsonb
+      if (!f) continue
+      const hasImages = (f.imageCount || 0) > 0
+      const hasCTA = (f.buttonCount || 0) > 0
+      const hasForm = (f.formCount || 0) > 0
+
+      // Skip if already correct
+      if (f.hasImages === hasImages && f.hasCTA === hasCTA && f.hasForm === hasForm) continue
+
+      const { error: updateErr } = await supabaseAdmin
+        .from('source_sections')
+        .update({
+          features_jsonb: { ...f, hasImages, hasCTA, hasForm }
+        })
+        .eq('id', row.id)
+
+      if (!updateErr) updated++
+    }
+
+    res.json({ message: 'Backfill complete', total: (data || []).length, updated })
+  } catch (err: any) {
     res.status(500).json({ error: err.message })
   }
 })
